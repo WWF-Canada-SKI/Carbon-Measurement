@@ -1,0 +1,490 @@
+// =================================================================================
+// === CARBON ZONAL STATISTICS TOOL WITH EXPORT ====================================
+
+
+// =================================================================================
+// === 1. STYLING AND CONFIGURATION ================================================
+// =================================================================================
+
+var STYLES = {
+  TITLE: {fontSize: '28px', fontWeight: 'bold', color: '#005931'},
+  SUBTITLE: {fontSize: '18px', fontWeight: '500', color: '#333333'},
+  PARAGRAPH: {fontSize: '14px', color: '#555555'},
+  HEADER: {fontSize: '16px', fontWeight: 'bold', margin: '16px 0 4px 8px'},
+  SUBHEADER: {fontSize: '14px', fontWeight: 'bold', margin: '10px 0 0 0'},
+  PANEL: {width: '400px', border: '1px solid #cccccc'},
+  HR: ui.Panel(null, ui.Panel.Layout.flow('horizontal'), {
+    border: '1px solid #E0E0E0', 
+    margin: '20px 0px 20px 0px'
+  }),
+  AOI_STYLE: {color: 'E53935', fillColor: 'E5393533'}
+};
+
+// =================================================================================
+// === 2. DATA AND VISUALIZATION ===================================================
+// =================================================================================
+
+var fc = ee.ImageCollection("projects/sat-io/open-datasets/carbon_stocks_ca/fc");
+var sc = ee.ImageCollection("projects/sat-io/open-datasets/carbon_stocks_ca/sc");
+
+var forestCarbon = fc.first();
+var soilCarbon = sc.first();
+
+var palettes = require('users/gena/packages:palettes');
+
+var fcPalette = palettes.colorbrewer.Greens[9].slice(1); 
+var scPalette = palettes.colorbrewer.Purples[9].slice(1);
+
+var fcVis = {palette: fcPalette, min: 0, max: 7.5};
+var scVis = {palette: scPalette, min: 6.5, max: 100};
+
+// =================================================================================
+// === 3. STATE MANAGEMENT =========================================================
+// =================================================================================
+
+var AppState = {
+  currentAoi: null,
+  currentResults: null,
+  
+  reset: function() {
+    this.currentAoi = null;
+    this.currentResults = null;
+  }
+};
+
+// =================================================================================
+// === 4. USER INTERFACE SETUP =====================================================
+// =================================================================================
+
+ui.root.clear();
+
+var mainPanel = ui.Panel({style: {width: '100%', height: '100%'}});
+var map = ui.Map();
+
+var splitPanel = ui.SplitPanel(
+  ui.Panel(),
+  map,
+  'horizontal',
+  false
+);
+ui.root.add(splitPanel);
+
+var panel = ui.Panel({style: STYLES.PANEL});
+splitPanel.setFirstPanel(panel);
+
+map.setCenter(-95, 55, 4);
+
+// --- 4.1. Header ---
+var logo1 = ee.Image('projects/ee-cathalpdoherty2/assets/wwfqgisAug28')
+  .visualize({
+    bands: ['b1', 'b2', 'b3'],
+    min: [0, 0, 0],
+    max: [255, 255, 255]
+  });
+var thumb = ui.Thumbnail({
+  image: logo1,
+  params: {dimensions: '600x300'},
+  style: {height: '75px', width: '75px'}
+});
+panel.add(thumb);
+
+var logo = ui.Label('Nature meets Carbon - Carbon Toolkit', STYLES.TITLE);
+var subtitle = ui.Label('Desktop Carbon Analysis', STYLES.SUBTITLE);
+var description = ui.Label(
+  'This tool calculates the mean and total carbon stocks (kg/m² and tonnes) ' +
+  'for a user-defined Area of Interest (AOI) in Canada using data from Sothe et al. (2022).',
+  STYLES.PARAGRAPH
+);
+
+panel.add(ui.Panel([logo, subtitle, description]));
+panel.add(STYLES.HR);
+
+// --- 4.2. Step 1: Define AOI ---
+panel.add(ui.Label('Step 1: Define your Area of Interest', STYLES.HEADER));
+
+var assetIdBox = ui.Textbox({
+  placeholder: 'e.g., users/your_name/your_asset',
+  style: {stretch: 'horizontal', margin: '0 8px'}
+});
+
+var assetPanel = ui.Panel(
+  [ui.Label('Enter GEE Asset Path:'), assetIdBox],
+  null,
+  {shown: false}
+);
+
+var aoiSelection = ui.Select({
+  items: ['Draw a polygon', 'Use a GEE Asset'],
+  value: 'Draw a polygon',
+  style: {stretch: 'horizontal', margin: '0 8px'},
+  onChange: function(value) {
+    assetPanel.style().set('shown', value === 'Use a GEE Asset');
+    map.drawingTools().setShown(value === 'Draw a polygon');
+  }
+});
+
+panel.add(aoiSelection);
+panel.add(assetPanel);
+
+panel.add(ui.Label(
+  '► Use the drawing tools on the map to define an area.', 
+  {fontSize: '12px', color: '#999999', margin: '4px 8px'}
+));
+
+// --- 4.3. Step 2: Run Analysis ---
+panel.add(ui.Label('Step 2: Run the Analysis', STYLES.HEADER));
+
+var runButton = ui.Button({
+  label: 'Calculate Carbon Statistics',
+  style: {stretch: 'horizontal', margin: '0 8px'},
+  onClick: runAnalysis
+});
+panel.add(runButton);
+
+// --- 4.4. Results Panel ---
+var resultsPanel = ui.Panel({style: {margin: '0 8px'}});
+panel.add(resultsPanel);
+
+// --- 4.5. Export Section ---
+panel.add(ui.Label('Step 3: Export Results', STYLES.HEADER));
+
+panel.add(ui.Label(
+  'Export your analysis results as a downloadable file.',
+  {fontSize: '12px', color: '#666666', margin: '4px 8px'}
+));
+
+// Export format selection
+var exportFormatSelect = ui.Select({
+  items: ['CSV', 'GeoJSON', 'KML'],
+  value: 'CSV',
+  style: {stretch: 'horizontal', margin: '0 8px'}
+});
+panel.add(ui.Label('Export Format:', {margin: '8px 8px 4px 8px', fontWeight: 'bold'}));
+panel.add(exportFormatSelect);
+
+// Export button
+var exportButton = ui.Button({
+  label: '⬇️ Generate Download Link',
+  style: {stretch: 'horizontal', margin: '8px'},
+  disabled: true
+});
+panel.add(exportButton);
+
+// Download link placeholder
+var downloadLink = null;
+
+exportButton.onClick(function() {
+  if (!AppState.currentResults) {
+    alert('Please run the analysis first before exporting.');
+    return;
+  }
+  
+  var format = exportFormatSelect.getValue();
+  exportResults(format);
+});
+
+var exportStatusLabel = ui.Label('', {
+  fontSize: '12px',
+  color: '#666666',
+  margin: '4px 8px',
+  fontStyle: 'italic'
+});
+panel.add(exportStatusLabel);
+
+// --- 4.6. Map Legend Panel ---
+var legendPanel = ui.Panel({style: {margin: '0 8px'}});
+panel.add(ui.Label('Step 4: Explore the Map', STYLES.HEADER));
+panel.add(legendPanel);
+
+// =================================================================================
+// === 5. CORE ANALYSIS FUNCTIONS ==================================================
+// =================================================================================
+
+function runAnalysis() {
+  resultsPanel.clear();
+  legendPanel.clear();
+  map.layers().reset();
+  exportStatusLabel.setValue('');
+  
+  resultsPanel.add(ui.Label('Calculating...', {color: 'gray'}));
+
+  var aoi = getAoi();
+  if (!aoi) {
+    resultsPanel.clear();
+    return;
+  }
+  
+  AppState.currentAoi = aoi;
+  
+  map.centerObject(aoi);
+  map.addLayer(aoi, STYLES.AOI_STYLE, 'Area of Interest (AOI)');
+
+  var fcClip = forestCarbon.clip(aoi);
+  var scClip = soilCarbon.clip(aoi);
+
+  map.addLayer(fcClip, fcVis, 'Forest Carbon (kg/m²)', true);
+  map.addLayer(scClip, scVis, 'Soil Carbon (kg/m²)', true);
+  
+  var combinedCarbon = forestCarbon.rename('forest')
+                                   .addBands(soilCarbon.rename('soil'));
+  
+  var reducer = ee.Reducer.mean()
+                  .combine({
+                    reducer2: ee.Reducer.stdDev(), 
+                    sharedInputs: true
+                  });
+  
+  var stats = combinedCarbon.reduceRegion({
+    reducer: reducer, 
+    geometry: aoi, 
+    scale: 250,
+    maxPixels: 1e9
+  });
+  
+  var area = aoi.area({'maxError': 1});
+
+  ee.Dictionary({stats: stats, area: area}).evaluate(function(results, error) {
+    if (error) {
+      resultsPanel.clear();
+      resultsPanel.add(ui.Label('Error: ' + error, {color: 'red'}));
+      exportButton.setDisabled(true);
+      return;
+    }
+    
+    // Store results for export
+    AppState.currentResults = results;
+    
+    displayStats(results);
+    createLegend();
+    
+    // Enable export button
+    exportButton.setDisabled(false);
+  });
+}
+
+function getAoi() {
+  var method = aoiSelection.getValue();
+  
+  if (method === 'Draw a polygon') {
+    var drawLayer = map.drawingTools().layers().get(0);
+    
+    if (drawLayer.geometries().length() > 0) {
+      return drawLayer.getEeObject();
+    }
+    
+    alert('Please draw a polygon on the map first!');
+    return null;
+    
+  } else {
+    var assetId = assetIdBox.getValue();
+    if (assetId) {
+      try {
+        return ee.FeatureCollection(assetId).geometry();
+      } catch (e) {
+        alert('Failed to load asset. Please check the path and your permissions.');
+        return null;
+      }
+    }
+    alert('Please enter a valid GEE Asset path!');
+    return null;
+  }
+}
+
+// =================================================================================
+// === 6. EXPORT FUNCTIONS =========================================================
+// =================================================================================
+
+function exportResults(format) {
+  if (!AppState.currentResults) {
+    alert('No results to export. Please run the analysis first.');
+    return;
+  }
+  
+  var results = AppState.currentResults;
+  var stats = results.stats;
+  var areaHa = results.area / 10000;
+  
+  // Calculate totals
+  var fcMean = stats.forest_mean;
+  var scMean = stats.soil_mean;
+  var fcTotalTonnes = (fcMean * results.area) / 1000;
+  var scTotalTonnes = (scMean * results.area) / 1000;
+  var totalTonnes = fcTotalTonnes + scTotalTonnes;
+  
+  // Get current date for the export
+  var today = new Date();
+  var dateStr = today.toISOString().split('T')[0];
+  
+  // Create feature collection with results as attributes
+  var exportFeature = ee.Feature(AppState.currentAoi, {
+    'analysis_date': dateStr,
+    'data_source': 'Sothe et al. (2022)',
+    'aoi_area_ha': areaHa.toFixed(2),
+    'forest_carbon_mean_kg_m2': fcMean ? fcMean.toFixed(2) : 'N/A',
+    'forest_carbon_stddev_kg_m2': stats.forest_stdDev ? stats.forest_stdDev.toFixed(2) : 'N/A',
+    'forest_carbon_total_tonnes': fcTotalTonnes.toFixed(0),
+    'soil_carbon_mean_kg_m2': scMean ? scMean.toFixed(2) : 'N/A',
+    'soil_carbon_stddev_kg_m2': stats.soil_stdDev ? stats.soil_stdDev.toFixed(2) : 'N/A',
+    'soil_carbon_total_tonnes': scTotalTonnes.toFixed(0),
+    'total_carbon_tonnes': totalTonnes.toFixed(0)
+  });
+  
+  var exportCollection = ee.FeatureCollection([exportFeature]);
+  
+  // Determine format parameter
+  var formatParam = format === 'CSV' ? 'CSV' : format;
+  
+  // Generate download URL
+  var downloadUrl = exportCollection.getDownloadURL({
+    format: formatParam,
+    filename: 'carbon_analysis_' + dateStr
+  });
+  
+  // Remove old download link if it exists
+  if (downloadLink) {
+    panel.remove(downloadLink);
+  }
+  
+  // Create new clickable download link
+  downloadLink = ui.Label({
+    value: '⬇️ Click here to download ' + format + ' file',
+    style: {
+      color: '#1976D2',
+      textDecoration: 'underline',
+      margin: '8px',
+      fontSize: '14px',
+      fontWeight: 'bold'
+    },
+    targetUrl: downloadUrl
+  });
+  
+  panel.add(downloadLink);
+  exportStatusLabel.setValue('✓ Download link generated successfully!');
+  exportStatusLabel.style().set('color', '#388E3C');
+  
+  print('Download link created for ' + format + ' export');
+  print('File includes: AOI geometry + carbon statistics as attributes');
+}
+
+// =================================================================================
+// === 7. DISPLAY FUNCTIONS ========================================================
+// =================================================================================
+
+function createLegend() {
+  legendPanel.clear();
+
+  var makeGradientLegend = function(visParams, title) {
+    var legendTitle = ui.Label(title, {
+      fontWeight: 'bold',
+      margin: '8px 0 4px 8px'
+    });
+
+    var colorBar = ui.Thumbnail({
+      image: ee.Image.pixelLonLat().select(0).visualize({
+        palette: visParams.palette,
+        min: 0,
+        max: 1
+      }),
+      params: {
+        bbox: '0,0,1,0.1',
+        dimensions: '100x10'
+      },
+      style: {
+        stretch: 'horizontal',
+        margin: '0 8px',
+        maxHeight: '24px'
+      },
+    });
+
+    var legendLabels = ui.Panel({
+      widgets: [
+        ui.Label(visParams.min, {margin: '4px 8px'}),
+        ui.Label(
+          ((visParams.max + visParams.min) / 2).toFixed(1),
+          {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}
+        ),
+        ui.Label(visParams.max, {margin: '4px 8px'})
+      ],
+      layout: ui.Panel.Layout.flow('horizontal')
+    });
+
+    legendPanel.add(legendTitle);
+    legendPanel.add(colorBar);
+    legendPanel.add(legendLabels);
+  };
+
+  makeGradientLegend(fcVis, 'Forest Carbon (kg C/m²)');
+  makeGradientLegend(scVis, 'Soil Carbon (kg C/m²)');
+}
+
+function displayStats(results) {
+  resultsPanel.clear();
+  resultsPanel.add(ui.Label('Carbon Stock Summary', STYLES.HEADER));
+
+  var stats = results.stats;
+  var areaHa = results.area / 10000;
+  
+  var formatNumber = function(num) {
+    if (num === null || num === undefined) return 'N/A';
+    return num.toLocaleString('en-US', {maximumFractionDigits: 0});
+  };
+
+  resultsPanel.add(ui.Label('AOI Area: ' + areaHa.toFixed(2) + ' hectares'));
+  
+  var makeStatRow = function(title, mean, stdDev, totalTonnes) {
+    var panel = ui.Panel([
+      ui.Label(title, STYLES.SUBHEADER),
+      ui.Label('Mean Stock: ' + 
+               (mean !== null ? mean.toFixed(2) : 'N/A') + 
+               ' (±' + 
+               (stdDev !== null ? stdDev.toFixed(2) : 'N/A') + 
+               ') kg C/m²'),
+      ui.Label('Total Stock: ' + formatNumber(totalTonnes) + ' tonnes C')
+    ]);
+    return panel;
+  };
+  
+  var fcMean = stats.forest_mean, fcStdDev = stats.forest_stdDev;
+  var scMean = stats.soil_mean, scStdDev = stats.soil_stdDev;
+  
+  var fcTotalTonnes = (fcMean * results.area) / 1000;
+  var scTotalTonnes = (scMean * results.area) / 1000;
+  var totalTonnes = fcTotalTonnes + scTotalTonnes;
+
+  resultsPanel.add(makeStatRow('Forest Carbon', fcMean, fcStdDev, fcTotalTonnes));
+  resultsPanel.add(makeStatRow('Soil Carbon', scMean, scStdDev, scTotalTonnes));
+
+  var totalPanel = ui.Panel([
+    ui.Label('Total Combined Stock:', {
+      fontWeight: 'bold', 
+      fontSize: '16px', 
+      margin: '16px 0 4px 0'
+    }),
+    ui.Label(formatNumber(totalTonnes) + ' tonnes C', {
+      fontSize: '20px', 
+      fontWeight: 'bold', 
+      color: STYLES.TITLE.color
+    })
+  ], null, {
+    border: '1px solid ' + STYLES.TITLE.color, 
+    padding: '8px', 
+    margin: '10px 0 0 0'
+  });
+  resultsPanel.add(totalPanel);
+}
+
+// =================================================================================
+// === 8. INITIALIZE THE APP =======================================================
+// =================================================================================
+
+var drawingTools = map.drawingTools();
+drawingTools.setShown(true);
+drawingTools.setDrawModes(['polygon', 'rectangle']);
+drawingTools.setLinked(false);
+drawingTools.setShape('polygon');
+
+print('═══════════════════════════════════════════════════════');
+print('Nature Meets Carbon - Desktop Analysis Tool');
+print('═══════════════════════════════════════════════════════');
+print('Ready to use. Follow the steps in the left panel.');
+print('');

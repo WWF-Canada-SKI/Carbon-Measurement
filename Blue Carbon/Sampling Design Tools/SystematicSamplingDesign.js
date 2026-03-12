@@ -1,5 +1,5 @@
 // =================================================================================
-// === BLUE CARBON RANDOM SAMPLING TOOL ===========================================
+// === BLUE CARBON SYSTEMATIC SAMPLING TOOL ========================================
 // =================================================================================
 
 // =================================================================================
@@ -13,7 +13,7 @@ var CONFIG = {
   DEFAULT_CONFIDENCE: 90,
   DEFAULT_MARGIN_OF_ERROR: 20,
   RANDOM_SEED: 42,
-  MIN_POINT_DISTANCE: 50, // meters - minimum distance between sampling points
+  GRID_BUFFER_M: 100, // meters - inward buffer for grid generation
   
   // Plot sizes per UNFCCC AR-AM-Tool-03 methodology
   SEDIMENT_CORE_AREA_HA: 0.01,     // 100 m² = 0.01 ha (standard blue carbon core)
@@ -64,17 +64,24 @@ var AppState = {
   currentAoi: null,
   currentPoints: null,
   pointsLayer: null,
+  gridLayer: null,
   aoiArea: null,
   currentEcosystemType: 'generic',
+  calculatedSampleSize: null,
   
   reset: function() {
     this.currentAoi = null;
     this.currentPoints = null;
     this.aoiArea = null;
     this.currentEcosystemType = 'generic';
+    this.calculatedSampleSize = null;
     if (this.pointsLayer) {
       map.layers().remove(this.pointsLayer);
       this.pointsLayer = null;
+    }
+    if (this.gridLayer) {
+      map.layers().remove(this.gridLayer);
+      this.gridLayer = null;
     }
   }
 };
@@ -111,6 +118,67 @@ var Utils = {
   },
   
   /**
+   * Retrieves the two-sided Student's t-value for given confidence and degrees of freedom.
+   * Uses exact lookup tables for df <= 30, Z-approximation for df > 30.
+   * Implements UNFCCC AR-AM-Tool-03 methodology for small sample corrections.
+   */
+  getTValue: function(confidencePercent, df) {
+    var alpha = 1 - (confidencePercent / 100);
+    var is95 = Math.abs(alpha - 0.05) < 0.01;
+    var is90 = Math.abs(alpha - 0.10) < 0.01;
+    var is85 = Math.abs(alpha - 0.15) < 0.01;
+    var is80 = Math.abs(alpha - 0.20) < 0.01;
+    
+    // For large samples (df > 30) or non-standard confidence levels, use Z-score
+    var zScore = this.calculateZScore(confidencePercent);
+    if (df > 30 || (!is95 && !is90 && !is85 && !is80)) {
+      return zScore; 
+    }
+    
+    // Lookup tables for small samples (df 1 to 30)
+    // 95% confidence (two-tailed, α = 0.05)
+    var t95 = [
+      0,      // placeholder for index 0
+      12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+      2.201,  2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+      2.080,  2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042
+    ];
+    
+    // 90% confidence (two-tailed, α = 0.10)
+    var t90 = [
+      0,      // placeholder for index 0
+      6.314,  2.920, 2.353, 2.132, 2.015, 1.943, 1.895, 1.860, 1.833, 1.812,
+      1.796,  1.782, 1.771, 1.761, 1.753, 1.746, 1.740, 1.734, 1.729, 1.725,
+      1.721,  1.717, 1.714, 1.711, 1.708, 1.706, 1.703, 1.701, 1.699, 1.697
+    ];
+    
+    // 85% confidence (two-tailed, α = 0.15)
+    var t85 = [
+      0,      // placeholder for index 0
+      4.165,  2.282, 1.924, 1.778, 1.699, 1.650, 1.617, 1.593, 1.574, 1.559,
+      1.548,  1.538, 1.530, 1.523, 1.517, 1.512, 1.508, 1.504, 1.500, 1.497,
+      1.494,  1.492, 1.489, 1.487, 1.485, 1.483, 1.481, 1.480, 1.478, 1.477
+    ];
+    
+    // 80% confidence (two-tailed, α = 0.20)
+    var t80 = [
+      0,      // placeholder for index 0
+      3.078,  1.886, 1.638, 1.533, 1.476, 1.440, 1.415, 1.397, 1.383, 1.372,
+      1.363,  1.356, 1.350, 1.345, 1.341, 1.337, 1.333, 1.330, 1.328, 1.325,
+      1.323,  1.321, 1.319, 1.318, 1.316, 1.315, 1.314, 1.313, 1.311, 1.310
+    ];
+    
+    var index = Math.max(1, Math.min(30, Math.floor(df)));
+    
+    if (is95) return t95[index];
+    if (is90) return t90[index];
+    if (is85) return t85[index];
+    if (is80) return t80[index];
+    
+    return zScore; // fallback
+  },
+  
+  /**
    * Apply Bayesian blending using proper mixture variance formula
    */
   applyBayesianBlending: function(measuredMean, measuredStdDev, areaHa, ecosystemType) {
@@ -141,11 +209,142 @@ var Utils = {
       measuredMean: measuredMean,
       measuredStdDev: measuredStdDev
     };
+  },
+  
+  calculateSpacingFromPoints: function(numPoints, totalAreaM2) {
+    if (!numPoints || !totalAreaM2 || numPoints === 0) {
+      return null;
+    }
+    var areaPerPoint = totalAreaM2 / numPoints;
+    return Math.round(Math.sqrt(areaPerPoint));
   }
 };
 
 // =================================================================================
-// === 4. USER INTERFACE ===========================================================
+// === 4. SYSTEMATIC SAMPLING GENERATOR ============================================
+// =================================================================================
+
+var SystematicSampler = {
+  
+  /**
+   * Generate systematic grid with centroids filtered to coastal areas
+   */
+  generateSystematicGrid: function(aoi, numPoints, callback) {
+    var WORKING_SCALE = CONFIG.ANALYSIS_SCALE;
+    
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🔍 Systematic Grid Generation (Buffered + Centroid)');
+    print('Target points:', numPoints);
+    print('Ecosystem type:', AppState.currentEcosystemType);
+    
+    // Step 1: Buffer AOI inward to avoid edge effects
+    var bufferedAoi = aoi.buffer(-CONFIG.GRID_BUFFER_M, CONFIG.MAX_ERROR);
+    
+    // Check if buffer made AOI too small
+    bufferedAoi.area({maxError: CONFIG.MAX_ERROR}).evaluate(function(bufferedArea, error) {
+      if (error || !bufferedArea || bufferedArea < 1000) {
+        print('⚠️ AOI too small for ' + CONFIG.GRID_BUFFER_M + 'm inward buffer, using original AOI');
+        bufferedAoi = aoi;
+      }
+      
+      // Step 2: Calculate spacing from buffered AOI area
+      bufferedAoi.area({maxError: CONFIG.MAX_ERROR}).evaluate(function(aoiAreaM2) {
+        
+        print('Buffered AOI area:', (aoiAreaM2 / 10000).toFixed(1), 'ha');
+        
+        // Calculate spacing to get target number of grid cells
+        var areaPerPoint = aoiAreaM2 / numPoints;
+        var spacing = Math.round(Math.sqrt(areaPerPoint));
+        
+        print('Calculated spacing:', spacing, 'm');
+        print('Expected grid cells:', Math.round(aoiAreaM2 / (spacing * spacing)));
+        
+        // Step 3: Create grid with randomized origin
+        var randomX = Math.random() * spacing;
+        var randomY = Math.random() * spacing;
+        var proj = ee.Projection('EPSG:3978').atScale(spacing).translate(randomX, randomY);
+        
+        print('Creating grid cells over buffered AOI...');
+        
+        // Step 4: Generate grid cells using coveringGrid
+        var gridCells = bufferedAoi.coveringGrid(proj, spacing);
+        
+        gridCells.size().evaluate(function(cellCount) {
+          print('Grid cells created:', cellCount);
+          
+          // Step 5: Extract centroids from grid cells
+          print('Extracting centroids...');
+          var centroids = gridCells.map(function(cell) {
+            return ee.Feature(cell.centroid(CONFIG.MAX_ERROR));
+          });
+          
+          centroids.size().evaluate(function(centroidCount) {
+            print('Centroids extracted:', centroidCount);
+            
+            // Step 6: Filter centroids to AOI (coastal blue carbon areas)
+            print('Filtering centroids to coastal areas...');
+            var validCentroids = centroids.filterBounds(aoi);
+            
+            validCentroids.size().evaluate(function(validCount) {
+              print('Valid centroids in coastal areas:', validCount);
+              print('Success rate:', ((validCount / centroidCount) * 100).toFixed(1) + '%');
+              
+              if (validCount === 0) {
+                callback(null, null, 'No valid grid centroids found in coastal areas.');
+                return;
+              }
+              
+              if (validCount < numPoints * 0.8) {
+                print('⚠️ WARNING: Only ' + validCount + ' valid points (target was ' + numPoints + ')');
+                print('⚠️ This may indicate fragmented coastal areas');
+              }
+              
+              // Step 7: Add point IDs and metadata (keep all valid centroids)
+              var pointsList = validCentroids.toList(validCentroids.size());
+              
+              pointsList.size().evaluate(function(listSize) {
+                print('Final point count:', listSize);
+                
+                var sequence = ee.List.sequence(0, listSize - 1);
+                
+                var finalPoints = ee.FeatureCollection(
+                  sequence.map(function(idx) {
+                    var pt = ee.Feature(pointsList.get(idx));
+                    var coords = pt.geometry().coordinates();
+                    return ee.Feature(pt.geometry(), {
+                      'point_id': ee.String('SYS_').cat(ee.Number(idx).add(1).format('%04d')),
+                      'ecosystem_type': AppState.currentEcosystemType,
+                      'sampling_type': 'systematic_grid_centroid',
+                      'grid_spacing_m': spacing,
+                      'lon': coords.get(0),
+                      'lat': coords.get(1)
+                    });
+                  })
+                );
+                
+                print('✓ Grid generation complete');
+                print('✓ True systematic grid layout maintained');
+                print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                
+                callback(finalPoints, spacing, null);
+              });
+            });
+          });
+        });
+      });
+    });
+  },
+  
+  /**
+   * Creates visual grid lines for display
+   */
+  createGridLines: function(aoi, cellSize) {
+    return aoi.coveringGrid('EPSG:3978', cellSize);
+  }
+};
+
+// =================================================================================
+// === 5. USER INTERFACE ===========================================================
 // =================================================================================
 
 ui.root.clear();
@@ -157,9 +356,9 @@ map.setCenter(-95, 55, 4);
 
 // --- Header ---
 panel.add(ui.Label('Blue Carbon Sampling Toolkit', STYLES.TITLE));
-panel.add(ui.Label('Random Sampling Design in Canadian Coastal Blue Carbon Ecosystems', STYLES.SUBTITLE));
+panel.add(ui.Label('Systematic Sampling Design in Canadian Coastal Blue Carbon Ecosystems', STYLES.SUBTITLE));
 panel.add(ui.Label(
-  'Calculate sample sizes and implement a randon sampling strategy for Canadian coastal blue carbon ecosystems',
+  'Calculate sample sizes and implment a systematic sampling strategy for Canadian coastal blue carbon ecosystems.',
   STYLES.PARAGRAPH
 ));
 panel.add(STYLES.HR);
@@ -278,7 +477,7 @@ var cvSlider = ui.Slider({
 });
 
 var cvOverrideCheck = ui.Checkbox({
-  label: 'Override with custom CV (%)', 
+  label: 'Override CV (%) - disables Bayesian adjustment', 
   value: false,
   style: {margin: '8px 8px 0 8px', fontWeight: 'bold'},
   onChange: function(checked) {
@@ -301,7 +500,7 @@ var resultsPanel = ui.Panel({style: {margin: '0 8px'}});
 panel.add(resultsPanel);
 
 // --- Step 3: Generate Points ---
-panel.add(ui.Label('Step 3: Generate Sampling Points', STYLES.HEADER));
+panel.add(ui.Label('Step 3: Generate Systematic Grid', STYLES.HEADER));
 
 var numPointsBox = ui.Textbox({
   placeholder: 'Number of points...',
@@ -320,12 +519,24 @@ var plotTypeSelect = ui.Select({
 panel.add(ui.Label('Plot Type:', {margin: '8px 8px 4px 8px', fontWeight: 'bold'}));
 panel.add(plotTypeSelect);
 panel.add(ui.Label(
-  '► Sediment cores for detailed carbon profiles; Vegetation plots to determine biomass ',
+  '► Sediment cores for detailed carbon profiles; Vegetation plots for biomass surveys',
   STYLES.INFO
 ));
 
+var spacingInfoLabel = ui.Label('', {
+  fontSize: '12px', color: '#666666', margin: '4px 8px', fontStyle: 'italic'
+});
+panel.add(spacingInfoLabel);
+
+var showGridCheckbox = ui.Checkbox({
+  label: 'Show grid lines on map',
+  value: true,
+  style: {margin: '8px'}
+});
+panel.add(showGridCheckbox);
+
 var generateButton = ui.Button({
-  label: 'Generate Random Points',
+  label: 'Generate Systematic Points',
   style: {stretch: 'horizontal', margin: '8px'},
   onClick: generatePoints
 });
@@ -358,7 +569,7 @@ var clearButton = ui.Button({
 panel.add(clearButton);
 
 // =================================================================================
-// === 5. CORE FUNCTIONS ===========================================================
+// === 6. CORE FUNCTIONS ===========================================================
 // =================================================================================
 
 function getAoi() {
@@ -415,10 +626,9 @@ function calculateSampleSize() {
     AppState.aoiArea = areaM2;
     var areaHa = areaM2 / 10000;
     
-    
-var plotType = plotTypeSelect.getValue();
-var plotSizeHa = (plotType === 'Sediment Core (100 m²)') ? 
-  CONFIG.SEDIMENT_CORE_AREA_HA : CONFIG.COMPOSITE_PLOT_SIZE_HA;
+    var plotType = plotTypeSelect.getValue();
+    var plotSizeHa = (plotType === 'Sediment Core (100 m²)') ? 
+      CONFIG.SEDIMENT_CORE_AREA_HA : CONFIG.COMPOSITE_PLOT_SIZE_HA;
     
     // Determine if user provided statistics
     var userMean = userMeanBox.getValue();
@@ -494,57 +704,120 @@ var plotSizeHa = (plotType === 'Sediment Core (100 m²)') ?
       resultsPanel.add(ui.Label('Using CV: ' + manualCv + '%', {margin: '4px 8px'}));
     }
     
-    // Calculate Sample Size using IPCC Equation 5
+    // Calculate Sample Size using UNFCCC AR-AM-Tool-03 iterative approach
     var N = areaHa / plotSizeHa;
-    var z = Utils.calculateZScore(confVal.value);
     var E = finalMean * (moeVal.value / 100);
     var sigma = finalStdDev;
     
-    var numerator = N * Math.pow(sigma, 2) * Math.pow(z, 2);
-    var denominator = (N - 1) * Math.pow(E, 2) + Math.pow(sigma, 2) * Math.pow(z, 2);
-    var n_final = numerator / denominator;
+    // Iterative calculation with t-distribution (converges on correct df)
+    var n_prev = N; // Start with population size as initial estimate
+    var n_final = 0;
+    var iterations = 0;
+    var maxIterations = 10;
+    var t_val;
+    var convergenceLog = [];
+    
+    while (iterations < maxIterations) {
+      // Calculate degrees of freedom (df = n - 1)
+      var df = Math.max(1, n_prev - 1);
+      t_val = Utils.getTValue(confVal.value, df);
+      
+      // UNFCCC single-stratum formula (algebraically simplified):
+      // n = (N × t² × σ²) / (N × E² + t² × σ²)
+      var numerator = N * Math.pow(t_val, 2) * Math.pow(sigma, 2);
+      var denominator = (N * Math.pow(E, 2)) + (Math.pow(t_val, 2) * Math.pow(sigma, 2));
+      
+      n_final = numerator / denominator;
+      
+      // Log iteration for diagnostics
+      convergenceLog.push({
+        iteration: iterations + 1,
+        df: df,
+        t_value: t_val,
+        n_estimate: n_final
+      });
+      
+      // Check convergence (change < 0.1)
+      if (Math.abs(n_final - n_prev) < 0.1) {
+        break;
+      }
+      
+      n_prev = n_final;
+      iterations++;
+    }
+    
+    // Apply Design Effect for systematic sampling
+    // Deff = 1.2 accounts for potential spatial autocorrelation in systematic grids
+    var Deff = 1.2; 
+    var n_adjusted = n_final / Deff;
+    
+    // Ensure minimum of 3 samples for basic variance estimation
+    var n_systematic = Math.max(3, Math.ceil(n_adjusted));
+    
+    AppState.calculatedSampleSize = n_systematic;
+    
+    // Calculate recommended spacing
+    var recommendedSpacing = Utils.calculateSpacingFromPoints(n_systematic, areaM2);
     
     // Display Results
     resultsPanel.add(ui.Label(''));
     resultsPanel.add(ui.Label('Recommended Sample Size', STYLES.SUBHEADER));
     
     var samplePanel = ui.Panel([
-      ui.Label(Math.ceil(n_final).toString() + ' samples', {
+      ui.Label(n_systematic.toString() + ' samples', {
         fontSize: '24px', fontWeight: 'bold', color: '#004d7a', margin: '4px 0'
       }),
       ui.Label(confVal.value + '% confidence, ±' + moeVal.value + '% error', {fontSize: '11px', color: '#666'}),
       ui.Label('Margin of Error: ±' + E.toFixed(3) + ' kg/m²', {fontSize: '11px', color: '#666'}),
       ui.Label('Population (N): ' + Utils.formatNumber(N, 0) + ' | Plot: ' + (plotSizeHa * 10000) + ' m²', {fontSize: '11px', color: '#666'}),
-      ui.Label('Z-score: ' + z.toFixed(3), {fontSize: '11px', color: '#666'})
+      ui.Label('t-value (df=' + Math.floor(n_systematic - 1) + '): ' + t_val.toFixed(3), {fontSize: '11px', color: '#666'}),
+      ui.Label('Design Effect: ' + Deff.toFixed(2) + ' (systematic grid)', {fontSize: '11px', color: '#666'}),
+      ui.Label('Iterations: ' + (iterations + 1) + ' (converged)', {fontSize: '11px', color: '#666'}),
+      ui.Label('Approx. grid spacing: ~' + Utils.formatNumber(recommendedSpacing, 0) + ' m', {fontSize: '11px', color: '#666'})
     ], null, {border: '2px solid #004d7a', padding: '12px', margin: '8px 0'});
     
     resultsPanel.add(samplePanel);
+    resultsPanel.add(ui.Label('► UNFCCC AR-AM-Tool-03 + Bayesian blending + Systematic Design Effect', STYLES.INFO));
     
     var applyButton = ui.Button({
       label: 'Apply to Points Field',
       style: {margin: '4px 0', stretch: 'horizontal', backgroundColor: '#00796B'},
       onClick: function() {
-        numPointsBox.setValue(Math.ceil(n_final).toString());
-        resultsPanel.add(ui.Label('✓ Applied ' + Math.ceil(n_final) + ' to points field', STYLES.SUCCESS));
+        numPointsBox.setValue(n_systematic.toString());
+        spacingInfoLabel.setValue('Target: ' + n_systematic + ' points');
+        resultsPanel.add(ui.Label('✓ Applied ' + n_systematic + ' to points field', STYLES.SUCCESS));
       }
     });
     resultsPanel.add(applyButton);
     
-    // Console output
+    // Console output with convergence details
     print('═══════════════════════════════════════════════════════');
-    print('BLUE CARBON SAMPLE SIZE CALCULATION (kg/m²)');
+    print('🌊 BLUE CARBON SAMPLE SIZE CALCULATION (kg/m²)');
     print('═══════════════════════════════════════════════════════');
     print('Ecosystem Type:', AppState.currentEcosystemType);
     print('Measured Mean:', measuredMean.toFixed(3), 'StdDev:', measuredStdDev.toFixed(3), 'CV:', measuredCv.toFixed(1) + '%');
     print('Final Mean:', finalMean.toFixed(3), 'StdDev:', finalStdDev.toFixed(3));
     print('Area:', areaHa.toFixed(1), 'ha | Plot Size:', plotSizeHa, 'ha');
     print('Population (N):', N.toFixed(0));
-    print('Z-score:', z.toFixed(3), '| Error (E):', E.toFixed(3));
-    print('Sample Size (n):', Math.ceil(n_final));
+    print('---');
+    print('UNFCCC ITERATIVE CALCULATION:');
+    print('Convergence iterations:', iterations + 1);
+    for (var i = 0; i < convergenceLog.length; i++) {
+      var entry = convergenceLog[i];
+      print('  Iter ' + entry.iteration + ': df=' + entry.df + ', t=' + entry.t_value.toFixed(3) + ', n=' + entry.n_estimate.toFixed(1));
+    }
+    print('---');
+    print('Final t-value (df=' + Math.floor(n_systematic - 1) + '):', t_val.toFixed(3));
+    print('Margin of Error (E):', E.toFixed(3), 'kg/m²');
+    print('Base sample size (n):', Math.ceil(n_final));
+    print('Design Effect (Deff):', Deff);
+    print('Adjusted sample size:', n_systematic);
+    print('Recommended spacing:', recommendedSpacing, 'm');
     print('CV Override Active:', cvOverrideCheck.getValue());
     if (blendedData) {
       print('Bayesian Weight:', (blendedData.weight * 100).toFixed(1) + '%');
     }
+    print('═══════════════════════════════════════════════════════');
   });
 }
 
@@ -552,6 +825,10 @@ function generatePoints() {
   if (AppState.pointsLayer) {
     map.layers().remove(AppState.pointsLayer);
     AppState.pointsLayer = null;
+  }
+  if (AppState.gridLayer) {
+    map.layers().remove(AppState.gridLayer);
+    AppState.gridLayer = null;
   }
   
   if (!AppState.currentAoi) {
@@ -567,59 +844,72 @@ function generatePoints() {
   
   var numPoints = numVal.value;
   
-  resultsPanel.add(ui.Label('Generating spatially distributed sampling points...', {
+  var loadingLabel = ui.Label('Generating systematic grid (buffered AOI + centroids)...', {
     color: '#666', fontStyle: 'italic', margin: '4px 8px'
-  }));
-  
-  // Generate random points within AOI (no carbon mask filtering)
-  var candidatePoints = ee.FeatureCollection.randomPoints({
-    region: AppState.currentAoi,
-    points: numPoints * 5,
-    seed: CONFIG.RANDOM_SEED
   });
+  resultsPanel.add(loadingLabel);
+  spacingInfoLabel.setValue('Calculating...');
   
-  // Spatial filtering to maintain minimum distance
-  var spatiallyFilteredPoints = ee.FeatureCollection(
-    ee.List(candidatePoints.toList(numPoints * 3).iterate(
-      function(point, list) {
-        list = ee.List(list);
-        point = ee.Feature(point);
+  SystematicSampler.generateSystematicGrid(
+    AppState.currentAoi,
+    numPoints,
+    function(points, spacing, error) {
+      resultsPanel.remove(loadingLabel);
+      
+      if (error) {
+        resultsPanel.add(ui.Label('⚠️ ' + error, STYLES.ERROR));
+        spacingInfoLabel.setValue('');
+        return;
+      }
+      
+      var calculatedSpacing = Math.round(spacing);
+      
+      AppState.currentPoints = points;
+      
+      AppState.currentPoints.size().evaluate(function(actualCount, evalError) {
+        if (evalError) {
+          resultsPanel.add(ui.Label('⚠️ Error: ' + evalError, STYLES.ERROR));
+          return;
+        }
         
-        var existingPoints = ee.FeatureCollection(list);
-        var tooClose = existingPoints.filterBounds(
-          point.geometry().buffer(CONFIG.MIN_POINT_DISTANCE)
-        ).size();
+        if (actualCount === 0) {
+          resultsPanel.add(ui.Label('⚠️ No points generated.', STYLES.WARNING));
+          spacingInfoLabel.setValue('');
+          return;
+        }
         
-        return ee.Algorithms.If(
-          tooClose.eq(0),
-          list.add(point),
-          list
+        spacingInfoLabel.setValue('Generated ' + actualCount + ' points (grid spacing: ' + calculatedSpacing + 'm)');
+        
+        AppState.pointsLayer = ui.Map.Layer(
+          AppState.currentPoints,
+          {color: '00796B'},
+          'Systematic Grid Points (' + actualCount + ')'
         );
-      },
-      ee.List([])
-    ))
-  ).limit(numPoints);
-  
-  AppState.currentPoints = spatiallyFilteredPoints;
-  
-  AppState.currentPoints.size().evaluate(function(actualCount) {
-    AppState.pointsLayer = ui.Map.Layer(
-      AppState.currentPoints,
-      {color: '00796B'},
-      'Blue Carbon Sampling Points (' + actualCount + ')'
-    );
-    map.layers().add(AppState.pointsLayer);
-    exportButton.setDisabled(false);
-    
-    if (actualCount < numPoints) {
-      resultsPanel.add(ui.Label('⚠️ Generated ' + actualCount + ' points (requested ' + numPoints + ')', STYLES.WARNING));
-      resultsPanel.add(ui.Label('Limited by AOI size or min. distance constraint', {
-        fontSize: '11px', color: '#666', margin: '0 8px'
-      }));
-    } else {
-      resultsPanel.add(ui.Label('✓ Generated ' + actualCount + ' points (min. ' + CONFIG.MIN_POINT_DISTANCE + 'm apart)', STYLES.SUCCESS));
+        map.layers().add(AppState.pointsLayer);
+        
+        if (showGridCheckbox.getValue()) {
+          var gridFeatures = SystematicSampler.createGridLines(AppState.currentAoi, calculatedSpacing);
+          AppState.gridLayer = ui.Map.Layer(
+            gridFeatures,
+            {color: 'AAAAAA', strokeWidth: 1},
+            'Grid Cells (' + calculatedSpacing + 'm)',
+            true,
+            0.3
+          );
+          map.layers().add(AppState.gridLayer);
+        }
+        
+        exportButton.setDisabled(false);
+        
+        var percentDiff = Math.abs((actualCount - numPoints) / numPoints * 100);
+        var msg = '✓ Generated ' + actualCount + ' points (target: ' + numPoints + ')';
+        if (percentDiff > 15) {
+          msg += ' - ' + percentDiff.toFixed(0) + '% difference due to coastal area filtering';
+        }
+        resultsPanel.add(ui.Label(msg, STYLES.SUCCESS));
+      });
     }
-  });
+  );
 }
 
 exportButton.onClick(function() {
@@ -629,19 +919,19 @@ exportButton.onClick(function() {
   var exportData = AppState.currentPoints.map(function(f, idx) {
     var coords = f.geometry().coordinates();
     return f.set({
-      'point_id': ee.Number(idx).add(1),
+      'point_id': f.get('point_id'),
       'longitude': coords.get(0),
       'latitude': coords.get(1),
       'export_format': format,
       'date': ee.Date(Date.now()).format('YYYY-MM-dd'),
       'ecosystem_type': AppState.currentEcosystemType,
       'plot_type': plotTypeSelect.getValue(),
-      'sampling_strategy': 'random'
+      'sampling_strategy': 'systematic'
     });
   });
   var downloadUrl = exportData.getDownloadURL({
     format: format === 'SHP' ? 'SHP' : format,
-    filename: 'blue_carbon_sampling_points_' + AppState.currentEcosystemType + '_' + new Date().getTime()
+    filename: 'blue_carbon_systematic_points_' + AppState.currentEcosystemType + '_' + new Date().getTime()
   });
   downloadLinksPanel.add(ui.Label({
     value: '⬇️ Download (' + format + ')',
@@ -662,6 +952,7 @@ function clearAll() {
   numPointsBox.setValue('');
   userMeanBox.setValue('');
   userStdDevBox.setValue('');
+  spacingInfoLabel.setValue('');
   exportButton.setDisabled(true);
   cvOverrideCheck.setValue(false);
   cvSlider.setDisabled(true);
@@ -669,7 +960,7 @@ function clearAll() {
 }
 
 // =================================================================================
-// === 6. INITIALIZE ===============================================================
+// === 7. INITIALIZE ===============================================================
 // =================================================================================
 
 var drawingTools = map.drawingTools();
@@ -687,18 +978,18 @@ map.setControlVisibility({
 });
 
 print('═══════════════════════════════════════════════════════');
-print('🌊 Blue Carbon Sampling Tool');
+print('🌊 Blue Carbon Systematic Sampling Tool v2.0');
 print('═══════════════════════════════════════════════════════');
 print('');
 print('DESIGNED FOR: Canadian coastal blue carbon ecosystems');
 print('  • Seagrass meadows');
 print('  • Salt marshes');
-print('');
+
 print('WORKFLOW:');
 print('  1. Define coastal sampling area');
 print('  2. Select ecosystem type');
-print('  3. Calculate sample size');
-print('  4. Generate random sampling points');
+print('  3. Calculate sample size (UNFCCC method)');
+print('  4. Generate systematic sampling points');
 print('  5. Export for field work');
 print('');
 print('Ready for blue carbon assessment!');

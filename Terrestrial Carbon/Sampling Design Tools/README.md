@@ -24,7 +24,7 @@ Each app generates exportable sampling point shapefiles and includes an integrat
 
 ## Getting Started
 ### 1. Open the app
-Navigate to the [GEE App Library](https://carbon-learning-library.projects.earthengine.app/)) and select the tool appropriate for your sampling strategy (see table above).
+Navigate to the [GEE App Library](https://carbon-learning-library.projects.earthengine.app/) and select the tool appropriate for your sampling strategy (see table above).
 
 ### 2. Define your Area of Interest (AOI)
 Use the map drawing tools to delineate your project boundary, or upload an existing polygon asset.

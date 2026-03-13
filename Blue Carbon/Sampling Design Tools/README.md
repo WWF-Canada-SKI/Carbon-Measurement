@@ -15,7 +15,7 @@ Each app generates exportable sampling point shapefiles and includes an integrat
 | **Random Sampling** | Unbiased coverage across an AOI with no prior spatial knowledge |
 | **Systematic Sampling** | Regular grid-based coverage; reduces spatial autocorrelation bias; efficient for large continuous ecosystems |
 | **Composite Sampling** | Hierarchical designs pairing High Resolution (HR) soil cores with composite subsamples|
-| **Stratified-Random Sampling** | Ecosystems with distinct habitat classes (e.g., high/low marsh, seagrass density zones); improves precision by reducing within-stratum variance |
+| **Stratified-Random Sampling** | Options for "Auto" or "Manual" stratififcation. Both define ecosystems with distinct classes (e.g., high/low marsh, seagrass density, restoration class); improves precision by reducing within-stratum variance |
 
 ## Getting Started
 ### 1. Open the app

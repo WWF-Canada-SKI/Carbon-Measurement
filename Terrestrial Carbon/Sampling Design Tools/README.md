@@ -1,7 +1,7 @@
 # Terrestrial Carbon Sampling Design Tools
 
 
-A suite of Google Earth Engine (GEE) applications for planning and implementing field sampling designs in terrestrial ecosystems (forests and upland habitats). Tools are designed for carbon quantification and follow statistical frameworks for sample size estimation.
+A collection of Google Earth Engine (GEE) applications for planning and implementing field sampling designs in terrestrial ecosystems (forests, grasslands, wetlands, tundra, among others). Tools are designed for carbon quantification and follow statistical frameworks for sample size estimation.
 
 
 | Resource | Link |

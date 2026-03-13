@@ -24,25 +24,23 @@ Each app generates exportable sampling point shapefiles and includes an integrat
 
 ## Getting Started
 ### 1. Open the app
-Navigate to the [GEE App Library](https://blue-carbon-hub.projects.earthengine.app/) and select the tool appropriate for your sampling strategy (see table above).
-
+Navigate to the [GEE App Library](https://carbon-learning-library.projects.earthengine.app/)) and select the tool appropriate for your sampling strategy (see table above).
 
 ### 2. Define your Area of Interest (AOI)
 Use the map drawing tools to delineate your project boundary, or upload an existing polygon asset.
 
-
 ### 3. Calculate sample size
 Enter your target confidence level, acceptable margin of error, and coefficient of variation (CV) — or accept the Canadian forest carbon defaults.
-
 
 ### 4. Generate samples
 Click **Generate Samples**.
 
-
 ### 5. Export
 Export sample points as GeoJSON, Shapefile, or CSV for use in field navigation software or further analysis.
 
-
 ## Notes
+- All tools are designed for **Canadian terrestrial ecosystems** and use EPSG:3978. Users applying these tools outside Canada should verify that the projection is appropriate for their region.
+- Sample outputs are intended as **starting points** — field crews should review generated points against high-resolution imagery before deployment.
+
 - All tools are designed for **Canadian terrestrial ecosystems** and use EPSG:3978. Users applying these tools outside Canada should verify that the projection is appropriate for their region.
 - Sample outputs are intended as **starting points** — field crews should review generated points against high-resolution imagery before deployment.

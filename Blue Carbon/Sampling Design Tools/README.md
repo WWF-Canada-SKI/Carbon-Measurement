@@ -1,6 +1,6 @@
 # Blue Carbon Sampling Design Tools
 
-A suite of Google Earth Engine (GEE) applications for planning and implementing field sampling designs in coastal blue carbon ecosystems (salt marshes and seagrasses). Tools are designed for carbon quantification and follow statistical frameworks for sample size estimation.
+A collection of Google Earth Engine (GEE) applications for planning and implementing field sampling designs in coastal blue carbon ecosystems (salt marshes and seagrasses). Tools are designed for carbon quantification and follow statistical frameworks for sample size estimation.
 
 | Resource | Link |
 |---|---|

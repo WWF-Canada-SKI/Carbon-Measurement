@@ -33,14 +33,6 @@ Click - **Generate Samples**.
 ### 5. Export
 Export sample points as GeoJSON, Shapefile, or CSV for use in field navigation software or further analysis
 
-## Recommended Workflow
-
-For most VM0033 blue carbon projects, the **Composite Sampling** tool is the primary entry point. It generates paired High Resolution (HR) cores and composite subsamples within user-defined strata, following the hierarchical sampling structure required for soil organic carbon quantification.
-
-Use **Stratified-Random** or **Systematic** tools for initial reconnaissance or when prior land cover stratification data (e.g., Copernicus, Google Embeddings clusters) are available to guide allocation.
-
 ## Notes
-
 - All tools are designed for **Canadian coastal ecosystems** and use EPSG:3978. Users applying these tools outside Canada should verify that the projection is appropriate for their region.
 - Sample outputs are intended as **starting points** — field crews should review generated points against high-resolution imagery before deployment.
-- For questions or to report issues, contact the WWF-Canada Blue Carbon team.

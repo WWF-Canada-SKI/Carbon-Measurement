@@ -12,9 +12,9 @@ Each app generates exportable sampling point shapefiles and includes an integrat
 
 | Tool | Best Use Case |
 |---|---|
-| **Random Sampling** | Baseline assessments; unbiased coverage across an AOI with no prior spatial knowledge |
+| **Random Sampling** | Unbiased coverage across an AOI with no prior spatial knowledge |
 | **Systematic Sampling** | Regular grid-based coverage; reduces spatial autocorrelation bias; efficient for large continuous ecosystems |
-| **Composite Sampling** | Hierarchical designs pairing High Resolution (HR) soil cores with composite subsamples; VM0033 core workflow |
+| **Composite Sampling** | Hierarchical designs pairing High Resolution (HR) soil cores with composite subsamples|
 | **Stratified-Random Sampling** | Ecosystems with distinct habitat classes (e.g., high/low marsh, seagrass density zones); improves precision by reducing within-stratum variance |
 
 ## Getting Started

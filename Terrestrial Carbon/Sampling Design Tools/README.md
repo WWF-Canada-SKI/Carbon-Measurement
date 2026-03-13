@@ -6,7 +6,7 @@ A suite of Google Earth Engine (GEE) applications for planning and implementing 
 
 | Resource | Link |
 |---|---|
-| GEE App Library | [blue-carbon-hub.projects.earthengine.app](https://blue-carbon-hub.projects.earthengine.app/) |
+| GEE App Library |  [carbon-learning-library.projects.earthengine.app](https://carbon-learning-library.projects.earthengine.app/) |
 | Carbon Learning Library | [wwf.ca/carbon-measurement](https://wwf.ca/carbon-measurement/) |
 
 

@@ -1,0 +1,852 @@
+---
+title: "Eelgrass Carbon Stock Analysis"
+subtitle: "Sediment Carbon Stocks in Newfoundland Eelgrass Meadows"
+date: today
+engine: knitr
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    embed-resources: true
+    theme: cosmo
+    fig-width: 8
+    fig-height: 5
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(knitr)
+library(sf)
+library(gstat)
+library(sp)
+library(tidyr)
+library(BlueCarbon)
+
+source("00_config.R")
+
+theme_set(theme_bw(base_size = 12))
+core_colour <- "#2E8B57"
+comp_colour <- "#e76f51"
+```
+
+## What this report covers
+
+This report walks through a complete analysis of sediment carbon stocks in an
+eelgrass (*Zostera marina*) meadow. The workflow has four main stages:
+
+1. **Raw data** — Load field measurements of soil organic carbon (SOC) and bulk
+   density (BD) from sediment cores, and compute raw carbon stocks.
+2. **Compaction correction** — Percussion coring compresses the sediment. We
+   measure the compression in the field and use the `BlueCarbon` R package to
+   stretch cores back to their true depths.
+3. **Depth harmonization** — Cores are sampled at different depth intervals.
+   We use spline interpolation to estimate SOC and BD at a common set of
+   standard depths so cores can be compared directly.
+4. **Spatial analysis** — Kriging interpolates carbon stocks across the meadow
+   using spatial autocorrelation, with and without water depth as a predictor.
+
+**How carbon stock is calculated:**
+Carbon stock (kg C/m²) = SOC (g/kg) × bulk density (g/cm³) × layer thickness (cm) ÷ 100.
+In words: higher organic carbon concentration, denser sediment, and thicker
+layers all mean more carbon stored per square metre.
+
+## Project overview
+
+```{r}
+locations <- read_csv(LOCATIONS_FILE, show_col_types = FALSE)
+samples   <- read_csv(SAMPLES_FILE,   show_col_types = FALSE)
+
+tibble(
+  Metric = c("Site", "Number of cores", "Total samples",
+             "Depth intervals", "Maximum core depth (cm)"),
+  Value  = c(SITE_NAME,
+             as.character(nrow(locations)),
+             as.character(nrow(samples)),
+             as.character(nrow(DEPTH_INTERVALS)),
+             as.character(max(samples$depth_bottom_cm)))
+) |> kable(col.names = c("", ""), align = c("l", "r"))
+```
+
+# Raw data {#sec-raw}
+
+```{r data-prep}
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+cores_raw <- samples |>
+  left_join(locations, by = "core_id") |>
+  mutate(
+    depth_cm           = (depth_top_cm + depth_bottom_cm) / 2,
+    layer_thickness_cm = depth_bottom_cm - depth_top_cm,
+    bd_estimated       = is.na(bulk_density_g_cm3),
+    bulk_density_g_cm3 = if_else(
+      bd_estimated,
+      sapply(stratum, function(s) BD_DEFAULTS[[s]] %||% NA_real_),
+      bulk_density_g_cm3
+    ),
+    carbon_stock_kg_m2 = (soc_g_kg * bulk_density_g_cm3 * layer_thickness_cm) / 100
+  )
+```
+
+## Core locations
+
+```{r fig.cap="Core locations coloured by water depth. Deeper sites have longer water columns and reduced light availability.", fig.height=5}
+ggplot(
+  cores_raw |> distinct(core_id, longitude, latitude, water_depth_m),
+  aes(x = longitude, y = latitude, colour = water_depth_m)
+) +
+  geom_point(size = 5) +
+  geom_text(aes(label = core_id), nudge_y = 0.0006, size = 3, colour = "grey30") +
+  scale_colour_viridis_c(option = "C", name = "Water\ndepth (m)") +
+  coord_sf() +
+  labs(title = "Core locations", subtitle = SITE_NAME,
+       x = "Longitude", y = "Latitude")
+```
+
+## Measured SOC profiles
+
+```{r fig.cap="Soil organic carbon concentration measured at each depth interval. Each line represents one core.", fig.height=5}
+ggplot(
+  cores_raw |> arrange(core_id, depth_cm),
+  aes(x = soc_g_kg, y = depth_cm, group = core_id, colour = core_id)
+) +
+  geom_path(linewidth = 0.7) +
+  geom_point(size = 2) +
+  scale_y_reverse(name = "Depth (cm)") +
+  scale_x_continuous(name = "SOC (g/kg)") +
+  labs(title = "Raw SOC depth profiles", colour = "Core")
+```
+
+## Measured bulk density profiles
+
+```{r fig.cap="Bulk density increases with depth as sediments compact under overburden pressure.", fig.height=5}
+ggplot(
+  cores_raw |> arrange(core_id, depth_cm),
+  aes(x = bulk_density_g_cm3, y = depth_cm, group = core_id, colour = core_id)
+) +
+  geom_path(linewidth = 0.7) +
+  geom_point(size = 2) +
+  scale_y_reverse(name = "Depth (cm)") +
+  scale_x_continuous(name = expression("Bulk density (g cm"^{-3}*")")) +
+  labs(title = "Raw bulk density profiles", colour = "Core")
+```
+
+## Measured carbon stocks
+
+```{r fig.cap="Carbon stock per sample layer (SOC x BD x layer thickness / 100). Thicker layers contribute more to total stock.", fig.height=5}
+ggplot(
+  cores_raw |> arrange(core_id, depth_cm),
+  aes(x = carbon_stock_kg_m2, y = depth_cm, group = core_id, colour = core_id)
+) +
+  geom_path(linewidth = 0.7) +
+  geom_point(size = 2) +
+  scale_y_reverse(name = "Depth (cm)") +
+  scale_x_continuous(name = expression("Carbon stock (kg C m"^{-2}*")")) +
+  labs(title = "Raw carbon stock profiles", colour = "Core")
+```
+
+```{r fig.cap="Total raw carbon stock per core, summed across all measured layers."}
+core_totals_raw <- cores_raw |>
+  group_by(core_id) |>
+  summarise(total_stock = sum(carbon_stock_kg_m2, na.rm = TRUE), .groups = "drop")
+
+ggplot(core_totals_raw, aes(x = reorder(core_id, -total_stock), y = total_stock)) +
+  geom_col(fill = core_colour, alpha = 0.8) +
+  labs(title = "Total carbon stock per core (raw)",
+       x = NULL,
+       y = expression("Carbon stock (kg C m"^{-2}*")"))
+```
+
+## Raw data summary
+
+```{r}
+cores_raw |>
+  group_by(core_id) |>
+  summarise(
+    `Max depth (cm)`  = max(depth_bottom_cm),
+    `n layers`        = n(),
+    `SOC range (g/kg)` = paste0(round(min(soc_g_kg), 1), " - ", round(max(soc_g_kg), 1)),
+    `BD range (g/cm3)` = paste0(round(min(bulk_density_g_cm3), 2), " - ",
+                                round(max(bulk_density_g_cm3), 2)),
+    `Total stock (kg/m2)` = round(sum(carbon_stock_kg_m2, na.rm = TRUE), 2),
+    .groups = "drop"
+  ) |>
+  kable(caption = "Per-core summary of raw measurements.")
+```
+
+
+# Compaction correction {#sec-compaction}
+
+When you push a coring tube into soft sediment, the core gets compressed — the
+sediment inside the tube ends up shorter than what was actually in the ground.
+This means our measured depths are too shallow, and bulk density appears higher
+than it really is (the same mass of sediment is squeezed into less space).
+
+We can measure how much compression happened in the field, then use the
+`BlueCarbon` R package to stretch the core back to its true length and adjust
+bulk density accordingly.
+
+## Compaction estimation
+
+Each core has three field measurements:
+
+- **Sampler length** — total length of the coring tube
+- **Internal distance** — distance from tube top to sediment surface *inside* the tube
+- **External distance** — distance from tube top to sediment surface *outside* the tube
+
+The compaction ratio is the recovered core length divided by the true
+sediment penetration depth. A ratio of 1.0 means no compaction; lower
+values indicate more compression.
+
+```{r compaction-estimate}
+comp_meas <- read_csv(COMPACTION_FILE, show_col_types = FALSE)
+
+comp_pct <- comp_meas |>
+  mutate(
+    recovered_length = sampler_length - internal_distance,
+    true_length      = sampler_length - external_distance,
+    compaction_ratio = recovered_length / true_length,
+    compaction       = 1 - compaction_ratio
+  )
+```
+
+```{r fig.cap="Compaction ratio per core. A ratio of 1.0 means no compaction. Lower values indicate more compression during coring. Typical values for percussion coring in soft eelgrass sediments range from 0.75-0.95.", fig.height=4}
+ggplot(comp_pct, aes(x = reorder(core_id, compaction_ratio), y = compaction_ratio)) +
+  geom_col(fill = comp_colour, alpha = 0.85, width = 0.6) +
+  geom_text(aes(label = round(compaction_ratio, 3)),
+            vjust = -0.5, size = 4) +
+  geom_hline(yintercept = 1, linetype = "dashed", colour = "grey50") +
+  labs(title = "Compaction ratio per core",
+       subtitle = "Ratio = recovered length / true length. Values < 1 indicate compression.",
+       x = NULL, y = "Compaction ratio") +
+  ylim(0, 1.1)
+```
+
+```{r}
+comp_pct |>
+  select(
+    core_id,
+    `True length (cm)` = true_length,
+    `Recovered length (cm)` = recovered_length,
+    `Compaction ratio` = compaction_ratio
+  ) |>
+  mutate(`Compaction ratio` = round(`Compaction ratio`, 3)) |>
+  kable(caption = "Compaction field measurements and compaction ratio per core.")
+```
+
+## Decompaction
+
+The `decompact()` function stretches core depths back to their true
+(pre-compaction) positions and adjusts bulk density downward — the same mass
+of sediment now occupies a larger volume.
+
+```{r decompact}
+samples_bc <- samples |>
+  left_join(select(comp_pct, core_id, compaction), by = "core_id") |>
+  mutate(compaction = coalesce(compaction, 0), soc_pct = soc_g_kg / 10)
+
+names(samples_bc)[names(samples_bc) == "depth_top_cm"]       <- "mind"
+names(samples_bc)[names(samples_bc) == "depth_bottom_cm"]    <- "maxd"
+names(samples_bc)[names(samples_bc) == "bulk_density_g_cm3"] <- "dbd"
+
+decompacted <- decompact(
+  samples_bc,
+  core = "core_id", compaction = "compaction",
+  mind = "mind", maxd = "maxd", dbd = "dbd"
+)
+```
+
+### Depth correction
+
+```{r fig.cap="Each bar shows one sample layer. Raw depths (blue, left) are expanded to corrected depths (orange, right) after decompaction. The most compacted cores show the largest depth shifts at the base.", fig.height=6, fig.width=10}
+# Compute corrected depths directly from raw samples and compaction ratios
+# corrected_depth = raw_depth / compaction_ratio (core expands to true length)
+depth_for_plot <- samples |>
+  left_join(select(comp_pct, core_id, compaction_ratio), by = "core_id") |>
+  mutate(
+    corr_top    = depth_top_cm / compaction_ratio,
+    corr_bottom = depth_bottom_cm / compaction_ratio
+  )
+
+raw_layers <- data.frame(
+  core_id = depth_for_plot$core_id,
+  top     = depth_for_plot$depth_top_cm,
+  bottom  = depth_for_plot$depth_bottom_cm,
+  method  = "Raw (compressed)",
+  xmin    = 0, xmax = 0.45,
+  compaction_ratio = depth_for_plot$compaction_ratio
+)
+corr_layers <- data.frame(
+  core_id = depth_for_plot$core_id,
+  top     = depth_for_plot$corr_top,
+  bottom  = depth_for_plot$corr_bottom,
+  method  = "Corrected (decompacted)",
+  xmin    = 0.55, xmax = 1,
+  compaction_ratio = depth_for_plot$compaction_ratio
+)
+depth_long <- rbind(raw_layers, corr_layers) |>
+  mutate(core_label = paste0(core_id, "\n(ratio: ", round(compaction_ratio, 3), ")"))
+
+ggplot(depth_long, aes(xmin = xmin, xmax = xmax, ymin = top, ymax = bottom, fill = method)) +
+  geom_rect(alpha = 0.7, colour = "white", linewidth = 0.3) +
+  scale_y_reverse(name = "Depth (cm)") +
+  scale_fill_manual(values = c("Raw (compressed)" = "#6baed6",
+                                "Corrected (decompacted)" = comp_colour)) +
+  facet_grid(~ reorder(core_label, compaction_ratio)) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        panel.grid.major.x = element_blank()) +
+  labs(title = "Depth intervals: raw vs decompacted",
+       subtitle = "Cores ordered by compaction ratio. Corrected depths are deeper (sediment expanded).",
+       x = NULL, fill = NULL)
+```
+
+### Bulk density correction
+
+```{r fig.cap="Decompaction reduces bulk density because the same sediment mass is distributed across a larger (true) volume. The correction is proportional to compaction — more compressed cores see larger BD reductions.", fig.height=5}
+# Compute corrected BD directly: bd_corrected = bd_raw * compaction_ratio
+# (same mass spread over expanded volume)
+bd_for_plot <- samples |>
+  left_join(select(comp_pct, core_id, compaction_ratio), by = "core_id") |>
+  mutate(
+    depth_mid_raw  = (depth_top_cm + depth_bottom_cm) / 2,
+    depth_mid_corr = ((depth_top_cm / compaction_ratio) + (depth_bottom_cm / compaction_ratio)) / 2,
+    bd_corr        = bulk_density_g_cm3 * compaction_ratio
+  )
+
+bd_long <- bd_for_plot |>
+  pivot_longer(cols = c(bulk_density_g_cm3, bd_corr),
+               names_to = "method", values_to = "bd") |>
+  mutate(
+    depth_mid = if_else(method == "bulk_density_g_cm3", depth_mid_raw, depth_mid_corr),
+    method = if_else(method == "bulk_density_g_cm3", "Raw", "Decompacted")
+  )
+
+ggplot(bd_long, aes(x = bd, y = depth_mid, colour = method, group = interaction(core_id, method))) +
+  geom_path(linewidth = 0.6, alpha = 0.7) +
+  geom_point(size = 1.5) +
+  scale_y_reverse(name = "Depth (cm)") +
+  scale_colour_manual(values = c("Raw" = "#6baed6", "Decompacted" = comp_colour)) +
+  facet_wrap(~core_id) +
+  labs(title = "Bulk density: raw vs decompacted",
+       subtitle = "Decompacted BD is lower — same mass over expanded depth",
+       x = expression("Bulk density (g cm"^{-3}*")"),
+       colour = NULL) +
+  theme(legend.position = "top")
+```
+
+```{r compute-decompacted-h}
+decompacted_with_h <- estimate_h(
+  decompacted,
+  core = "core_id",
+  mind = "mind_corrected",
+  maxd = "maxd_corrected"
+)
+```
+
+
+# Depth harmonization {#sec-harmonized}
+
+Cores are sampled at different depth intervals depending on how the core was
+sectioned in the lab. To compare across cores and compute site-level averages,
+we need all profiles on the same depth scale. Harmonization uses smooth curve
+fitting (spline interpolation) to estimate SOC and bulk density at a common
+set of standard depth intervals.
+
+The harmonization is applied to the **decompacted** cores — depth intervals
+and bulk density have already been corrected for compaction in the previous step.
+
+**Standard depth intervals:**
+
+```{r}
+DEPTH_INTERVALS |>
+  mutate(Label = paste0(depth_top, "-", depth_bottom, " cm")) |>
+  select(Label, `Midpoint (cm)` = depth_midpoint, `Thickness (cm)` = thickness_cm) |>
+  kable()
+```
+
+**Method:**
+
+- **Within measured range:** smooth curve fitting (monotone spline interpolation)
+  that follows the shape of measured profiles without creating artificial peaks
+  or dips between data points.
+- **Beyond measured range:** if SOC clearly decreases with depth, the curve
+  continues that declining trend (exponential decay). Otherwise, the deepest
+  measured value is carried downward. Extrapolation is limited to 2.5× the
+  maximum measured depth.
+
+```{r harmonize}
+fit_hybrid_profile <- function(depths, values, targets) {
+  if (length(depths) < 2) return(rep(NA_real_, length(targets)))
+  max_d <- max(depths)
+  fn <- tryCatch(splinefun(depths, values, method = "monoH.FC"), error = function(e) NULL)
+  if (is.null(fn)) return(rep(NA_real_, length(targets)))
+  decay <- NULL
+  rho <- tryCatch(cor(depths, values, method = "spearman", use = "complete.obs"),
+                  error = function(e) NA_real_)
+  if (!is.na(rho) && rho < -0.3 && length(depths) >= 3)
+    try(decay <- lm(log(values + 0.1) ~ depths), silent = TRUE)
+  sapply(targets, function(d) {
+    if (d <= max_d) fn(d)
+    else if (d > max_d * 2.5) NA_real_
+    else if (!is.null(decay) && coef(decay)[2] < 0)
+      exp(predict(decay, newdata = data.frame(depths = d))) - 0.1
+    else values[which.max(depths)]
+  })
+}
+
+# Use decompacted cores as input
+cores_for_harm <- decompacted_with_h |>
+  left_join(select(locations, core_id, stratum, latitude, longitude, water_depth_m),
+            by = "core_id") |>
+  mutate(
+    depth_cm           = (mind_corrected + maxd_corrected) / 2,
+    bulk_density_g_cm3 = dbd_corrected
+  )
+
+cores_qa <- cores_for_harm |>
+  filter(!is.na(depth_cm), !is.na(soc_g_kg), !is.na(bulk_density_g_cm3)) |>
+  arrange(core_id, depth_cm)
+
+results <- lapply(unique(cores_qa$core_id), function(id) {
+  sub <- cores_qa |> filter(core_id == id) |> arrange(depth_cm)
+  if (nrow(sub) < 2) return(NULL)
+  tryCatch({
+    depths   <- sub$depth_cm
+    soc_pred <- fit_hybrid_profile(depths, sub$soc_g_kg, DEPTH_MIDPOINTS)
+    bd_fn    <- splinefun(depths, sub$bulk_density_g_cm3, method = "monoH.FC")
+    bd_last  <- sub$bulk_density_g_cm3[which.max(depths)]
+    bd_pred  <- sapply(DEPTH_MIDPOINTS, function(d) if (d <= max(depths)) bd_fn(d) else bd_last)
+    data.frame(
+      core_id = id, stratum = sub$stratum[1],
+      latitude = sub$latitude[1], longitude = sub$longitude[1],
+      water_depth_m = sub$water_depth_m[1],
+      depth_cm_midpoint = DEPTH_MIDPOINTS,
+      thickness_cm = DEPTH_INTERVALS$thickness_cm,
+      soc_harmonized = pmax(0, soc_pred),
+      bd_harmonized = pmax(0, bd_pred),
+      is_extrapolated = DEPTH_MIDPOINTS > max(depths)
+    )
+  }, error = function(e) NULL)
+})
+
+cores_harmonized <- bind_rows(results) |>
+  mutate(carbon_stock_kg_m2 = (soc_harmonized * bd_harmonized * thickness_cm) / 100) |>
+  filter(!is.na(carbon_stock_kg_m2))
+```
+
+## Harmonized SOC profiles
+
+```{r fig.cap="Harmonized SOC at standard depth midpoints. Open circles indicate extrapolated values beyond the measured depth range.", fig.height=5}
+ggplot(cores_harmonized,
+  aes(x = soc_harmonized, y = depth_cm_midpoint,
+      group = core_id, colour = core_id)) +
+  geom_path(linewidth = 0.7) +
+  geom_point(aes(shape = is_extrapolated), size = 2.5) +
+  scale_y_reverse(name = "Depth midpoint (cm)") +
+  scale_shape_manual(values = c("FALSE" = 16, "TRUE" = 1),
+                     labels = c("Interpolated", "Extrapolated")) +
+  labs(title = "Harmonized SOC profiles (from decompacted cores)",
+       x = "SOC (g/kg)", colour = "Core", shape = "Method")
+```
+
+## Harmonized bulk density profiles
+
+```{r fig.cap="Harmonized bulk density at standard depth midpoints. Values reflect decompacted (corrected) bulk densities.", fig.height=5}
+ggplot(cores_harmonized,
+  aes(x = bd_harmonized, y = depth_cm_midpoint,
+      group = core_id, colour = core_id)) +
+  geom_path(linewidth = 0.7) +
+  geom_point(aes(shape = is_extrapolated), size = 2.5) +
+  scale_y_reverse(name = "Depth midpoint (cm)") +
+  scale_shape_manual(values = c("FALSE" = 16, "TRUE" = 1),
+                     labels = c("Interpolated", "Extrapolated")) +
+  labs(title = "Harmonized bulk density profiles (decompacted)",
+       x = expression("Bulk density (g cm"^{-3}*")"),
+       colour = "Core", shape = "Method")
+```
+
+## Processing pipeline comparison
+
+This section shows how SOC values and total carbon stocks change through
+each stage of the workflow — from raw measurements, through compaction
+correction, to harmonized standard depths.
+
+```{r fig.cap="SOC comparison across all three processing stages: raw measurements (blue points), harmonized profile (coloured line + diamonds at standard depths).", fig.height=6, fig.width=10}
+ggplot() +
+  # Raw measurements (original compressed depths)
+  geom_point(data = cores_raw,
+             aes(x = soc_g_kg, y = depth_cm),
+             colour = "#6baed6", size = 2, alpha = 0.5) +
+  # Harmonized profile — connect the diamonds
+  geom_path(data = cores_harmonized |> arrange(core_id, depth_cm_midpoint),
+            aes(x = soc_harmonized, y = depth_cm_midpoint, colour = core_id),
+            linewidth = 0.7) +
+  # Harmonized values at standard depths
+  geom_point(data = cores_harmonized,
+             aes(x = soc_harmonized, y = depth_cm_midpoint, colour = core_id),
+             shape = 18, size = 3.5) +
+  geom_hline(yintercept = DEPTH_INTERVALS$depth_top, linetype = "dashed",
+             alpha = 0.3) +
+  scale_y_reverse(name = "Depth (cm)") +
+  facet_wrap(~core_id, scales = "free_x") +
+  labs(title = "Raw vs decompacted vs harmonized SOC",
+       subtitle = "Blue points = raw, lines = decompacted spline, diamonds = harmonized at standard depths",
+       x = "SOC (g/kg)", colour = "Core") +
+  theme(legend.position = "none")
+```
+
+```{r fig.cap="Total carbon stock per core at each processing stage. Raw = as measured. Decompacted = after correcting for coring compression (depths expanded, BD reduced). Harmonized = decompacted values interpolated to standard depth intervals.", fig.height=5}
+# Decompacted totals (intermediate stage)
+cores_decomp_stock <- decompacted_with_h |>
+  mutate(
+    layer_thickness = maxd_corrected - mind_corrected,
+    stock = soc_g_kg * dbd_corrected * layer_thickness / 100
+  )
+core_totals_decomp <- cores_decomp_stock |>
+  group_by(core_id) |>
+  summarise(decompacted = sum(stock, na.rm = TRUE), .groups = "drop")
+
+# Harmonized totals
+core_totals_harm <- cores_harmonized |>
+  group_by(core_id) |>
+  summarise(harmonized = sum(carbon_stock_kg_m2, na.rm = TRUE), .groups = "drop")
+
+three_way <- core_totals_raw |>
+  rename(raw = total_stock) |>
+  left_join(core_totals_decomp, by = "core_id") |>
+  left_join(core_totals_harm, by = "core_id") |>
+  pivot_longer(cols = c(raw, decompacted, harmonized),
+               names_to = "stage", values_to = "stock") |>
+  mutate(stage = factor(stage, levels = c("raw", "decompacted", "harmonized")))
+
+ggplot(three_way, aes(x = core_id, y = stock, fill = stage)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  scale_fill_manual(
+    values = c("raw" = "grey60", "decompacted" = comp_colour, "harmonized" = core_colour),
+    labels = c("Raw (as measured)", "Decompacted (depth + BD corrected)",
+               "Harmonized (standard depths)")
+  ) +
+  labs(title = "Total carbon stock across processing stages",
+       subtitle = "Each bar shows the total 0-100 cm carbon stock at a different stage of the workflow",
+       x = NULL,
+       y = expression("Carbon stock (kg C m"^{-2}*")"),
+       fill = NULL) +
+  theme(legend.position = "top")
+```
+
+
+# Carbon stock estimates {#sec-estimates}
+
+## Per-depth summary
+
+```{r}
+depth_summary <- cores_harmonized |>
+  group_by(`Depth interval` = paste0(
+    DEPTH_INTERVALS$depth_top[match(depth_cm_midpoint, DEPTH_MIDPOINTS)],
+    "-",
+    DEPTH_INTERVALS$depth_bottom[match(depth_cm_midpoint, DEPTH_MIDPOINTS)],
+    " cm")) |>
+  summarise(
+    `Midpoint (cm)` = first(depth_cm_midpoint),
+    `n cores`        = n_distinct(core_id),
+    `Mean SOC (g/kg)` = round(mean(soc_harmonized, na.rm = TRUE), 1),
+    `Mean BD (g/cm3)` = round(mean(bd_harmonized, na.rm = TRUE), 2),
+    `Mean stock (kg/m2)` = round(mean(carbon_stock_kg_m2, na.rm = TRUE), 2),
+    `SD (kg/m2)`     = round(sd(carbon_stock_kg_m2, na.rm = TRUE), 2),
+    `SE (kg/m2)`     = round(sd(carbon_stock_kg_m2, na.rm = TRUE) / sqrt(n_distinct(core_id)), 2),
+    `% extrapolated`  = round(mean(is_extrapolated) * 100, 0),
+    .groups = "drop"
+  ) |>
+  arrange(`Midpoint (cm)`)
+
+depth_summary |>
+  select(-`Midpoint (cm)`) |>
+  kable(caption = "Harmonized carbon stocks by depth interval (from decompacted cores).")
+```
+
+## Total carbon stock (0-100 cm)
+
+```{r}
+depth_stats <- cores_harmonized |>
+  group_by(depth_cm_midpoint) |>
+  summarise(
+    mean_stock = mean(carbon_stock_kg_m2, na.rm = TRUE),
+    se_stock   = sd(carbon_stock_kg_m2, na.rm = TRUE) / sqrt(n_distinct(core_id)),
+    .groups = "drop"
+  )
+
+total_mean  <- sum(depth_stats$mean_stock)
+total_se    <- sqrt(sum(depth_stats$se_stock^2))
+ci90_lower  <- total_mean - 1.645 * total_se
+ci90_upper  <- total_mean + 1.645 * total_se
+
+tibble(
+  Metric = c("Mean total stock", "Standard error",
+             "90% CI lower bound", "90% CI upper bound",
+             "Equivalent (Mg C/ha)"),
+  Value  = c(
+    paste0(round(total_mean, 2), " kg C/m2"),
+    paste0(round(total_se, 2), " kg C/m2"),
+    paste0(round(ci90_lower, 2), " kg C/m2"),
+    paste0(round(ci90_upper, 2), " kg C/m2"),
+    paste0(round(total_mean * 10, 1), " Mg C/ha")
+  )
+) |> kable(col.names = c("", ""),
+           caption = "Site-level carbon stock estimate (0-100 cm, from decompacted + harmonized cores).")
+```
+
+```{r fig.cap="Mean carbon stock by depth interval with 90% confidence intervals. Estimates are based on decompacted, harmonized cores.", fig.height=4.5}
+plot_data <- cores_harmonized |>
+  group_by(depth_cm_midpoint) |>
+  summarise(
+    mean_stock = mean(carbon_stock_kg_m2, na.rm = TRUE),
+    se_stock   = sd(carbon_stock_kg_m2, na.rm = TRUE) / sqrt(n_distinct(core_id)),
+    ci90_lower = mean_stock - qt(0.95, n_distinct(core_id) - 1) * se_stock,
+    ci90_upper = mean_stock + qt(0.95, n_distinct(core_id) - 1) * se_stock,
+    .groups = "drop"
+  )
+
+ggplot(plot_data, aes(x = mean_stock,
+                      y = factor(depth_cm_midpoint))) +
+  geom_col(fill = core_colour, alpha = 0.7) +
+  geom_errorbarh(aes(xmin = pmax(0, ci90_lower), xmax = ci90_upper), height = 0.3) +
+  scale_y_discrete(name = "Depth midpoint (cm)",
+                   limits = rev(as.character(DEPTH_MIDPOINTS))) +
+  labs(title = "Mean carbon stock by depth (90% CI)",
+       subtitle = SITE_NAME,
+       x = expression("Carbon stock (kg C m"^{-2}*")"))
+```
+
+## Per-core breakdown
+
+```{r fig.cap="Stacked carbon stock by depth interval for each core. Colour intensity increases with depth.", fig.height=5}
+ggplot(cores_harmonized,
+  aes(x = core_id, y = carbon_stock_kg_m2,
+      fill = factor(depth_cm_midpoint))) +
+  geom_col(alpha = 0.85) +
+  scale_fill_manual(
+    values = c("7.5" = "#a1d99b", "22.5" = "#74c476",
+               "40" = "#31a354", "75" = "#006d2c"),
+    name = "Depth\nmidpoint (cm)") +
+  labs(title = "Carbon stock breakdown by core and depth",
+       x = NULL,
+       y = expression("Carbon stock (kg C m"^{-2}*")")) +
+  theme(legend.position = "right")
+```
+
+
+# Spatial analysis — Kriging {#sec-kriging}
+
+With only `r n_distinct(cores_harmonized$core_id)` cores, we can still
+estimate spatial patterns by assuming that locations close together tend to
+have similar carbon stocks. Kriging formalises this idea: it fits a model of
+how similarity decays with distance (the **variogram**), then uses that model
+to predict stocks at unsampled locations and estimate the prediction
+uncertainty.
+
+Two approaches are shown:
+
+1. **Ordinary kriging** — predicts based on distance to nearby cores only.
+2. **Universal kriging** — also accounts for water depth, so areas at similar
+   depths to high-carbon cores receive higher predicted stocks.
+
+```{r kriging-setup}
+core_stocks <- cores_harmonized |>
+  group_by(core_id, latitude, longitude, water_depth_m) |>
+  summarise(total_stock_kg_m2 = sum(carbon_stock_kg_m2, na.rm = TRUE), .groups = "drop")
+
+cores_sf  <- st_as_sf(core_stocks, coords = c("longitude", "latitude"), crs = 4326)
+cores_utm <- st_transform(cores_sf, crs = 32621)
+coords_utm <- st_coordinates(cores_utm)
+cores_utm$x <- coords_utm[, 1]
+cores_utm$y <- coords_utm[, 2]
+
+bbox   <- st_bbox(cores_utm)
+buffer <- 200
+grid_pts <- expand.grid(
+  x = seq(bbox["xmin"] - buffer, bbox["xmax"] + buffer, by = 25),
+  y = seq(bbox["ymin"] - buffer, bbox["ymax"] + buffer, by = 25)
+)
+grid_sf <- st_as_sf(grid_pts, coords = c("x", "y"), crs = 32621)
+
+sp_cores <- as(cores_utm, "Spatial")
+sp_grid  <- as(grid_sf, "Spatial")
+
+idw_depth <- idw(water_depth_m ~ 1, locations = sp_cores, newdata = sp_grid, idp = 2)
+grid_pts$water_depth_m <- idw_depth$var1.pred
+
+sp_cores_df <- SpatialPointsDataFrame(
+  coords = cbind(cores_utm$x, cores_utm$y),
+  data = data.frame(total_stock = cores_utm$total_stock_kg_m2,
+                    water_depth_m = cores_utm$water_depth_m),
+  proj4string = CRS("+init=epsg:32621")
+)
+
+core_plot_pts <- data.frame(x = cores_utm$x, y = cores_utm$y,
+                            core_id = core_stocks$core_id)
+```
+
+## Variogram analysis
+
+```{r fig.cap="Variogram: each point shows how different pairs of cores are at a given separation distance. The fitted line is the model kriging uses to predict at new locations. The flat part (sill) is the overall variance; the distance where the curve levels off (range) is how far apart cores need to be before they stop telling us about each other.", fig.height=4.5}
+vg_ok <- variogram(total_stock ~ 1, data = sp_cores_df)
+
+vg_fit_ok <- tryCatch(
+  fit.variogram(vg_ok, vgm(psill = var(core_stocks$total_stock_kg_m2),
+                            model = "Sph",
+                            range = max(dist(coords_utm)) / 2,
+                            nugget = 0.1)),
+  error = function(e) {
+    fit.variogram(vg_ok, vgm(psill = var(core_stocks$total_stock_kg_m2),
+                              model = "Exp",
+                              range = max(dist(coords_utm)) / 3,
+                              nugget = 0.1))
+  }
+)
+
+plot(vg_ok, vg_fit_ok, main = "Ordinary Kriging — Variogram")
+```
+
+```{r}
+tibble(
+  Component = vg_fit_ok$model,
+  Sill      = round(vg_fit_ok$psill, 2),
+  Range     = round(vg_fit_ok$range, 0)
+) |> kable(caption = "Fitted variogram parameters.")
+```
+
+## Ordinary kriging
+
+```{r ok-predict}
+sp_grid_ok <- SpatialPointsDataFrame(
+  coords = cbind(grid_pts$x, grid_pts$y),
+  data = grid_pts,
+  proj4string = CRS("+init=epsg:32621")
+)
+
+ok_result <- krige(total_stock ~ 1, locations = sp_cores_df,
+                   newdata = sp_grid_ok, model = vg_fit_ok)
+grid_pts$ok_pred <- ok_result$var1.pred
+grid_pts$ok_var  <- ok_result$var1.var
+```
+
+```{r fig.cap="Ordinary kriging prediction of total carbon stock (0-100 cm). Red points show core locations.", fig.height=5.5}
+ggplot(grid_pts, aes(x = x, y = y, fill = ok_pred)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "D", name = expression("kg C m"^{-2})) +
+  geom_point(data = core_plot_pts, colour = "red", size = 3,
+             shape = 21, fill = "white", stroke = 0.8) +
+  geom_text(data = core_plot_pts, aes(x = x, y = y, label = core_id),
+            nudge_y = 40, size = 2.5, colour = "white", inherit.aes = FALSE) +
+  coord_equal() +
+  labs(title = "Ordinary Kriging — Total Carbon Stock",
+       subtitle = SITE_NAME, x = "Easting (m)", y = "Northing (m)")
+```
+
+```{r fig.cap="Prediction standard error — uncertainty is lowest near core locations and increases with distance. This map helps identify where additional sampling would most reduce uncertainty.", fig.height=5.5}
+ggplot(grid_pts, aes(x = x, y = y, fill = sqrt(ok_var))) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "A", name = expression("SE (kg C m"^{-2}*")")) +
+  geom_point(data = core_plot_pts, colour = "red", size = 3,
+             shape = 21, fill = "white", stroke = 0.8) +
+  coord_equal() +
+  labs(title = "Ordinary Kriging — Prediction Standard Error",
+       x = "Easting (m)", y = "Northing (m)")
+```
+
+## Universal kriging (water depth as drift)
+
+Universal kriging first accounts for the effect of water depth on carbon stocks
+(the trend), then models the remaining spatial pattern in the residuals. This
+can improve predictions when carbon stocks vary systematically with depth.
+
+```{r uk-predict}
+vg_uk <- variogram(total_stock ~ water_depth_m, data = sp_cores_df)
+
+vg_fit_uk <- tryCatch(
+  fit.variogram(vg_uk, vgm(psill = var(core_stocks$total_stock_kg_m2) * 0.5,
+                            model = "Sph",
+                            range = max(dist(coords_utm)) / 2,
+                            nugget = 0.1)),
+  error = function(e) {
+    fit.variogram(vg_uk, vgm(psill = var(core_stocks$total_stock_kg_m2) * 0.5,
+                              model = "Exp",
+                              range = max(dist(coords_utm)) / 3,
+                              nugget = 0.1))
+  }
+)
+
+sp_grid_uk <- SpatialPointsDataFrame(
+  coords = cbind(grid_pts$x, grid_pts$y),
+  data = grid_pts,
+  proj4string = CRS("+init=epsg:32621")
+)
+
+uk_result <- krige(total_stock ~ water_depth_m, locations = sp_cores_df,
+                   newdata = sp_grid_uk, model = vg_fit_uk)
+grid_pts$uk_pred <- uk_result$var1.pred
+grid_pts$uk_var  <- uk_result$var1.var
+```
+
+```{r fig.cap="Universal kriging uses water depth to improve predictions — areas with similar water depth to high-carbon cores receive higher predicted stocks.", fig.height=5.5}
+ggplot(grid_pts, aes(x = x, y = y, fill = uk_pred)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "D", name = expression("kg C m"^{-2})) +
+  geom_point(data = core_plot_pts, colour = "red", size = 3,
+             shape = 21, fill = "white", stroke = 0.8) +
+  coord_equal() +
+  labs(title = "Universal Kriging — Total Carbon Stock (drift: water depth)",
+       subtitle = SITE_NAME, x = "Easting (m)", y = "Northing (m)")
+```
+
+## Comparison: ordinary vs universal kriging
+
+```{r fig.cap="Difference between universal and ordinary kriging predictions. Positive values (green) indicate areas where accounting for water depth increases the predicted stock.", fig.height=5.5}
+grid_pts$diff <- grid_pts$uk_pred - grid_pts$ok_pred
+
+ggplot(grid_pts, aes(x = x, y = y, fill = diff)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#d73027", mid = "white", high = "#1a9850",
+                       midpoint = 0,
+                       name = expression(Delta~"kg C m"^{-2})) +
+  geom_point(data = core_plot_pts, colour = "black", size = 3,
+             shape = 21, fill = "white", stroke = 0.8) +
+  coord_equal() +
+  labs(title = "Difference: Universal - Ordinary Kriging",
+       x = "Easting (m)", y = "Northing (m)")
+```
+
+```{r}
+tibble(
+  Method = c("Ordinary kriging", "Universal kriging"),
+  `Mean prediction (kg/m2)` = round(c(mean(grid_pts$ok_pred, na.rm = TRUE),
+                                       mean(grid_pts$uk_pred, na.rm = TRUE)), 2),
+  `Mean SE (kg/m2)` = round(c(mean(sqrt(grid_pts$ok_var), na.rm = TRUE),
+                               mean(sqrt(grid_pts$uk_var), na.rm = TRUE)), 2),
+  `Equivalent (Mg C/ha)` = round(c(mean(grid_pts$ok_pred, na.rm = TRUE) * 10,
+                                    mean(grid_pts$uk_pred, na.rm = TRUE) * 10), 1)
+) |> kable(caption = "Comparison of kriging approaches.")
+```
+
+## Caveats
+
+::: {.callout-note}
+With only `r n_distinct(core_stocks$core_id)` cores, variogram fitting is
+unreliable and kriging predictions carry high uncertainty. These results are
+illustrative — treat the spatial patterns as hypotheses to test with additional
+sampling, not as definitive carbon stock maps.
+
+Water depth at prediction grid points was approximated by inverse distance
+weighting from core locations. For operational use, replace this with a
+bathymetry raster.
+:::
+
+---
+
+*Rendered: `r format(Sys.time(), "%Y-%m-%d %H:%M")`*

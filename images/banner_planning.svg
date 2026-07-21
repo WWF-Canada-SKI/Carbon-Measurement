@@ -1,0 +1,81 @@
+<svg width="1200" height="360" viewBox="0 0 1200 360" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Project Planning — Blue Carbon Eelgrass Workshop</title>
+<desc>Illustration of an eelgrass meadow beneath the water surface, with a sediment corer extending down into a layered sediment core, headed "Project Planning".</desc>
+<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#bfe3f0"/>
+    <stop offset="100%" stop-color="#5fb3d1"/>
+  </linearGradient>
+  <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#2c8fb0"/>
+    <stop offset="55%" stop-color="#1c6f92"/>
+    <stop offset="100%" stop-color="#0f4c66"/>
+  </linearGradient>
+  <linearGradient id="sediment" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#9c7a54"/>
+    <stop offset="35%" stop-color="#7a5c3d"/>
+    <stop offset="70%" stop-color="#553f29"/>
+    <stop offset="100%" stop-color="#322417"/>
+  </linearGradient>
+</defs>
+
+<rect x="0" y="0" width="1200" height="90" fill="url(#sky)"/>
+<rect x="0" y="90" width="1200" height="180" fill="url(#water)"/>
+<rect x="0" y="270" width="1200" height="90" fill="url(#sediment)"/>
+
+<circle cx="1040" cy="55" r="26" fill="#fff6d8" opacity="0.9"/>
+
+<g opacity="0.25" stroke="#eaf7fb" stroke-width="2" fill="none" stroke-linecap="round">
+  <path d="M0 60 Q 60 45 120 60 T 240 60 T 360 60"/>
+  <path d="M700 40 Q 760 25 820 40 T 940 40 T 1060 40"/>
+</g>
+
+<g stroke="#2a1d12" stroke-width="1" opacity="0.35">
+  <line x1="0" y1="285" x2="1200" y2="285"/>
+  <line x1="0" y1="300" x2="1200" y2="300"/>
+  <line x1="0" y1="315" x2="1200" y2="315"/>
+  <line x1="0" y1="330" x2="1200" y2="330"/>
+  <line x1="0" y1="345" x2="1200" y2="345"/>
+</g>
+
+<!-- Sampling grid overlaid on the meadow, standing in for plot/stratum layout -->
+<g stroke="#eaf7fb" stroke-width="1.5" opacity="0.4" fill="none">
+  <line x1="500" y1="95" x2="500" y2="265"/>
+  <line x1="600" y1="95" x2="600" y2="265"/>
+  <line x1="700" y1="95" x2="700" y2="265"/>
+  <line x1="450" y1="130" x2="750" y2="130"/>
+  <line x1="450" y1="180" x2="750" y2="180"/>
+  <line x1="450" y1="230" x2="750" y2="230"/>
+</g>
+<g fill="#fff6d8" opacity="0.85">
+  <circle cx="500" cy="130" r="4"/>
+  <circle cx="600" cy="180" r="4"/>
+  <circle cx="700" cy="230" r="4"/>
+  <circle cx="600" cy="130" r="4"/>
+  <circle cx="500" cy="230" r="4"/>
+</g>
+
+<g fill="none" stroke-linecap="round">
+  <path d="M60 270 C 50 200 75 150 55 90" stroke="#1f7a4d" stroke-width="6" opacity="0.85"/>
+  <path d="M95 270 C 110 210 80 160 100 100" stroke="#2c9a5f" stroke-width="6" opacity="0.85"/>
+  <path d="M135 270 C 120 195 150 145 130 80" stroke="#1f7a4d" stroke-width="6" opacity="0.8"/>
+  <path d="M175 270 C 190 220 165 170 185 110" stroke="#2c9a5f" stroke-width="6" opacity="0.8"/>
+
+  <path d="M1000 270 C 990 200 1015 150 995 95" stroke="#1f7a4d" stroke-width="6" opacity="0.8"/>
+  <path d="M1035 270 C 1050 210 1020 160 1040 105" stroke="#2c9a5f" stroke-width="6" opacity="0.8"/>
+  <path d="M1075 270 C 1060 195 1090 145 1070 85" stroke="#1f7a4d" stroke-width="6" opacity="0.8"/>
+  <path d="M1115 270 C 1130 220 1105 170 1125 115" stroke="#2c9a5f" stroke-width="6" opacity="0.8"/>
+</g>
+
+<!-- Sediment corer: casing in the water column, core sample visible extending deep into the sediment -->
+<rect x="875" y="150" width="18" height="195" rx="3" fill="#e8e2d5" stroke="#8a836f" stroke-width="1.5" opacity="0.95"/>
+<rect x="875" y="150" width="18" height="20" fill="#c9c2b0"/>
+<rect x="875" y="270" width="18" height="75" fill="#332417" opacity="0.9"/>
+
+<!-- Section wayfinding tag -->
+<rect x="40" y="28" width="168" height="32" rx="16" fill="#0f4c66" opacity="0.55"/>
+<text x="124" y="49" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600" letter-spacing="1" fill="#eaf7fb">SECTION 2 OF 4</text>
+
+<text x="600" y="192" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="46" font-weight="600" fill="#ffffff">Project Planning</text>
+<text x="600" y="226" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="17" letter-spacing="1" fill="#dff2f8">SAMPLING STRATEGY &#8226; SAMPLE ALLOCATION &#8226; STRATIFICATION</text>
+</svg>

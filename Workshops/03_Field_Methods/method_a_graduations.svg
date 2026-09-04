@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" width="900" height="470" font-family="Helvetica, Arial, sans-serif">
+
+  <!-- opaque background so the figure reads the same in light and dark GitHub themes -->
+  <rect x="0" y="0" width="900" height="470" fill="#ffffff"/>
+
+  <!-- ================= PANEL 1 : in the ground ================= -->
+  <text x="40" y="36" font-size="16" font-weight="bold" fill="#1b1f23">1 &#183; In the ground</text>
+  <text x="40" y="56" font-size="12.5" fill="#57606a">Read the graduation sitting at the sediment surface</text>
+  <text x="40" y="74" font-size="12.5" font-weight="bold" fill="#0b5d3b">&#8594; depth of corer inserted (penetration)</text>
+
+  <!-- sediment block -->
+  <rect x="40" y="215" width="380" height="200" fill="#e2d5b7" stroke="#b8a780" stroke-width="1.5"/>
+  <text x="52" y="402" font-size="11.5" fill="#8a7a55">sediment</text>
+  <line x1="40" y1="215" x2="420" y2="215" stroke="#8a7a55" stroke-width="2"/>
+  <text x="316" y="208" font-size="11.5" fill="#57606a">sediment surface</text>
+
+  <!-- PVC tube walls -->
+  <rect x="180" y="100" width="56" height="282" fill="none" stroke="#3d4b5c" stroke-width="3"/>
+  <!-- sediment captured inside the tube (sits slightly lower than outside = compaction) -->
+  <rect x="183" y="228" width="50" height="151" fill="#cbb98f"/>
+  <!-- bevelled cutting end -->
+  <path d="M180 372 L188 384 M236 372 L228 384" stroke="#3d4b5c" stroke-width="3" fill="none"/>
+  <text x="96" y="120" font-size="11.5" fill="#57606a">PVC tube</text>
+  <line x1="146" y1="116" x2="178" y2="116" stroke="#57606a" stroke-width="1"/>
+
+  <!-- graduations marked on the OUTSIDE of the tube, zeroed at the bevelled end -->
+  <g stroke="#3d4b5c" stroke-width="1.5">
+    <line x1="236" y1="379" x2="254" y2="379"/>
+    <line x1="236" y1="339" x2="254" y2="339"/>
+    <line x1="236" y1="299" x2="254" y2="299"/>
+    <line x1="236" y1="259" x2="254" y2="259"/>
+    <line x1="236" y1="219" x2="254" y2="219"/>
+    <line x1="236" y1="179" x2="254" y2="179"/>
+    <line x1="236" y1="139" x2="254" y2="139"/>
+  </g>
+  <g font-size="11" fill="#57606a">
+    <text x="259" y="383">0 cm</text>
+    <text x="259" y="343">10</text>
+    <text x="259" y="303">20</text>
+    <text x="259" y="263">30</text>
+    <text x="259" y="223">40</text>
+    <text x="259" y="183">50</text>
+    <text x="259" y="143">60</text>
+  </g>
+
+  <!-- callout to the reading at the sediment surface (~42 cm) -->
+  <circle cx="243" cy="215" r="4.5" fill="#0b5d3b"/>
+  <line x1="247" y1="213" x2="300" y2="176" stroke="#0b5d3b" stroke-width="1.5"/>
+  <rect x="300" y="136" width="118" height="44" rx="5" fill="#e8f3ec" stroke="#0b5d3b" stroke-width="1.4"/>
+  <text x="311" y="155" font-size="12" font-weight="bold" fill="#0b5d3b">read here: 42 cm</text>
+  <text x="311" y="171" font-size="11" fill="#0b5d3b">= depth inserted</text>
+
+  <!-- penetration brace on the left -->
+  <path d="M152 215 L142 215 L142 379 L152 379" stroke="#3d4b5c" stroke-width="1.5" fill="none"/>
+  <text x="58" y="288" font-size="12" fill="#1b1f23">depth of corer</text>
+  <text x="58" y="304" font-size="12" fill="#1b1f23">inserted</text>
+  <text x="58" y="322" font-size="12" font-weight="bold" fill="#1b1f23">42 cm</text>
+
+  <!-- ================= PANEL 2 : out of the ground ================= -->
+  <line x1="450" y1="26" x2="450" y2="430" stroke="#d0d7de" stroke-width="1.5" stroke-dasharray="5 5"/>
+
+  <text x="486" y="36" font-size="16" font-weight="bold" fill="#1b1f23">2 &#183; After extrusion</text>
+  <text x="486" y="56" font-size="12.5" fill="#57606a">Measure the sediment you actually recovered</text>
+  <text x="486" y="74" font-size="12.5" font-weight="bold" fill="#0b5d3b">&#8594; length of core extracted (recovery)</text>
+
+  <!-- extruded core -->
+  <rect x="576" y="140" width="70" height="239" fill="#cbb98f" stroke="#8a7a55" stroke-width="2"/>
+  <text x="576" y="132" font-size="11.5" fill="#57606a">recovered core</text>
+
+  <!-- tape measure alongside -->
+  <rect x="662" y="140" width="24" height="239" fill="#fdf6d8" stroke="#b8a780" stroke-width="1.5"/>
+  <g stroke="#8a7a55" stroke-width="1.2">
+    <line x1="662" y1="140" x2="686" y2="140"/>
+    <line x1="662" y1="203" x2="686" y2="203"/>
+    <line x1="662" y1="266" x2="686" y2="266"/>
+    <line x1="662" y1="329" x2="686" y2="329"/>
+    <line x1="662" y1="379" x2="686" y2="379"/>
+  </g>
+  <g font-size="10.5" fill="#8a7a55">
+    <text x="692" y="144">0</text>
+    <text x="692" y="207">10</text>
+    <text x="692" y="270">20</text>
+    <text x="692" y="333">30</text>
+    <text x="692" y="383">38</text>
+  </g>
+
+  <!-- recovery brace -->
+  <path d="M556 140 L546 140 L546 379 L556 379" stroke="#0b5d3b" stroke-width="1.5" fill="none"/>
+  <text x="742" y="248" font-size="12" fill="#1b1f23">length of core</text>
+  <text x="742" y="264" font-size="12" fill="#1b1f23">extracted</text>
+  <text x="742" y="282" font-size="12" font-weight="bold" fill="#1b1f23">38 cm</text>
+
+  <!-- ================= FOOTER ================= -->
+  <rect x="40" y="428" width="820" height="30" rx="6" fill="#f3f6f8" stroke="#d0d7de" stroke-width="1.2"/>
+  <text x="56" y="447" font-size="11.5" fill="#1b1f23">compaction = 42 &#8722; 38 = 4 cm</text>
+  <text x="240" y="447" font-size="11.5" fill="#57606a">&#8226;&#160; the data sheet records both numbers, not the difference:</text>
+  <text x="572" y="447" font-size="11.5" font-family="monospace" fill="#0b5d3b">outside_depth_cm</text>
+  <text x="690" y="447" font-size="11.5" fill="#1b1f23">and</text>
+  <text x="722" y="447" font-size="11.5" font-family="monospace" fill="#0b5d3b">inside_depth_cm</text>
+</svg>

@@ -37,8 +37,3 @@ Click **Generate Samples**.
 
 ### 5. Export
 Export sample points as GeoJSON, Shapefile, or CSV for use in field navigation software or further analysis.
-
-## Notes
-
-- All tools are designed for **Canadian terrestrial ecosystems** and use EPSG:3978. Users applying these tools outside Canada should verify that the projection is appropriate for their region.
-- Sample outputs are intended as **starting points** — field crews should review generated points against high-resolution imagery before deployment.

@@ -26,7 +26,7 @@ Forests and soils are presented separately because their observations, methods a
 
 ## 1. Data and summaries
 
-The tables below summarise the source catalogue and your dataset shortlist. Expand a table to see its records. Inclusion does not mean that a dataset is hosted in this new repository. Access, source terms and unresolved definitions remain specific to each resource.
+The tables below summarise the source catalogue and available datasets.
 
 ### Forests
 
@@ -50,7 +50,7 @@ Forest inventories, plot measurements and sampled-tree datasets. Retain measurem
 
 #### Covariates
 
-Environmental variables used by forest studies, including canopy structure, optical reflectance, radar, climate and terrain. Study-level performance is distinct from the importance of an individual covariate.
+Environmental variables used by forest studies, including canopy structure, optical reflectance, radar, climate and terrain.
 
 <details>
 <summary>View forest studies, model grids and predictor evidence</summary>
@@ -85,7 +85,7 @@ These are candidate extraction recipes from the earlier planning work, not a cla
 
 #### Maps
 
-Forest biomass and carbon maps. Aboveground biomass is distinct from carbon, and products that include different vegetation pools cannot be interpreted as equivalent totals.
+Forest biomass and carbon maps. Aboveground biomass is a measure of the weight of plants within a unit area. In cases where direct measurement of carbon concentration of the biomass is available, a Carbon-Conversion factor of 0.5 is used to convert biomass estimates for carbon. This allows for comparisons across multiple independent studies.
 
 <details>
 <summary>View forest map products</summary>
@@ -126,7 +126,7 @@ The biomass SD describes within-polygon variation; it is not automatically a pre
 
 #### Ground data
 
-Soil profiles, peat cores and sediment observations. The preparation counts below refer to source-project versions; they are not a deduplicated count of Canadian locations. Janousek includes Canadian, US and Mexican Pacific coast records. Riley records are sampling-location groups whose separate core identities remain unresolved.
+Soil profiles, peat cores and sediment observations. NOTE: Janousek includes Canadian, US and Mexican Pacific coast records.
 
 <details>
 <summary>View soil profile and layer preparations</summary>
@@ -225,20 +225,12 @@ The supplied table has 29 named entries; the study reports 40 expanded candidate
 </details>
 
 <details>
-<summary>View coastal covariate evidence from Janousek</summary>
-
-| Scale/context | Variables examined | Evidence and availability |
-|---|---|---|
-| Core/local habitat | Tidal-frame elevation, sediment fines below 63 µm, dominant vegetation and salinity groups | Local regressions/group comparisons; incomplete coverage; fines were averaged over the upper 30 cm |
-| Estuary/watershed | Estuary identity, ecosystem type | Local/context factors in the full boosted-regression-tree model |
-| Regional coast | Latitude, level-1 ecoregion, Köppen–Geiger zone, estuary geomorphic type | Full model regional factors; geography was not uniformly predictive |
-| California–Oregon–Washington subset | Relative tidal elevation plus precipitation, air temperature and maximum VPD | 649-core BRT subset; PRISM 1991–2020 normals at 800 m; not a verified Canada-wide climate stack |
 
 </details>
 
 #### Maps
 
-Soil concentration, density, fixed-depth stocks and peat products. Keep fixed-depth mineral-soil estimates, organic-inclusive stocks and full peat columns separate. PEATGRIDS provides both thickness and carbon; missing values must not appear as high carbon on a map.
+Soil concentration, density, fixed-depth stocks and peat.
 
 <details>
 <summary>View soil and peat map products</summary>
